@@ -32,6 +32,7 @@ export class UI implements GameEvents {
             <div class="bar xp"><i id="xpFill"></i><b id="lvlText"></b></div>
           </div>
           <div class="info"><div id="waveText"></div><div id="scoreText"></div><div id="coinText"></div></div>
+          <button id="camBtn" class="icon">🎥</button>
           <button id="pauseBtn" class="icon">⏸</button>
         </div>
         <div id="bossBar" class="boss hidden"><span id="bossName"></span><div class="bar"><i id="bossFill"></i></div></div>
@@ -57,6 +58,10 @@ export class UI implements GameEvents {
     game.events = this;
     const bomb = $(this.root, '#bombBtn');
     bomb.addEventListener('pointerdown', e => { e.preventDefault(); input.bombPressed = true; });
+    $(this.root, '#camBtn').addEventListener('click', () => {
+      const m = game.toggleCam();
+      this.banner(m === 'chase' ? 'ВИД ОТ 3-ГО ЛИЦА' : 'ВИД СВЕРХУ', m === 'chase' ? 'Слева — ходить, справа свайп — крутить камеру' : 'Классика', 'info');
+    });
     $(this.root, '#pauseBtn').addEventListener('click', () => { game.pause(); this.onPause(); });
     this.screens.addEventListener('click', e => {
       const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
@@ -85,6 +90,7 @@ export class UI implements GameEvents {
       case 'chars': this.chars(); break;
       case 'scores': this.scoresScreen(); break;
       case 'sound': save.muted = !save.muted; audio.setMuted(save.muted); commit(); this.menu(); break;
+      case 'cam': g.setCamMode(save.camMode === 'top' ? 'chase' : 'top'); this.menu(); break;
       case 'mut': save.mutator = !save.mutator; commit(); this.menu(); break;
       case 'daily': this.claimDaily(); break;
       case 'pick': {
@@ -125,6 +131,7 @@ export class UI implements GameEvents {
         <div class="spacer"></div>
         ${canDaily ? `<button class="btn gold" data-act="daily">🎁 ЕЖЕДНЕВНЫЙ ПОДАРОК +${reward}🪙</button>` : ''}
         <button class="btn mut ${save.mutator ? 'on' : ''}" data-act="mut"><b>${save.mutator ? '✅' : '⬜'} Мутатор дня: ${m.name}</b><small>${m.desc} · монеты x1.5</small></button>
+        <button class="btn" data-act="cam">🎥 КАМЕРА: ${save.camMode === 'chase' ? 'ОТ 3-ГО ЛИЦА' : 'СВЕРХУ'}</button>
         <button class="btn big" data-act="play">▶ ИГРАТЬ <small>за ${c.emoji} ${c.name}</small></button>
         <div class="row">
           <button class="btn" data-act="chars">🧍 ГЕРОИ</button>

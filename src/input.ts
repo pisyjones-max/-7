@@ -4,6 +4,10 @@ export class Input {
   z = 0;
   bombPressed = false;
   enabled = false;
+  chase = false;
+  private lookId = -1;
+  private lastLookX = 0;
+  private lookAcc = 0;
   private keys = new Set<string>();
   private stickId = -1;
   private sx = 0;
@@ -12,7 +16,15 @@ export class Input {
 
   constructor(private zone: HTMLElement, private base: HTMLElement, private knob: HTMLElement) {
     zone.addEventListener('pointerdown', e => {
-      if (!this.enabled || this.stickId >= 0) return;
+      if (!this.enabled) return;
+      if (this.chase && e.clientX > window.innerWidth * 0.5) {
+        if (this.lookId >= 0) return;
+        this.lookId = e.pointerId; this.lastLookX = e.clientX;
+        zone.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+      if (this.stickId >= 0) return;
       this.stickId = e.pointerId;
       this.sx = e.clientX; this.sy = e.clientY;
       zone.setPointerCapture(e.pointerId);
@@ -23,6 +35,7 @@ export class Input {
       e.preventDefault();
     });
     zone.addEventListener('pointermove', e => {
+      if (e.pointerId === this.lookId) { this.lookAcc += e.clientX - this.lastLookX; this.lastLookX = e.clientX; return; }
       if (e.pointerId !== this.stickId) return;
       let dx = e.clientX - this.sx, dy = e.clientY - this.sy;
       const len = Math.hypot(dx, dy);
@@ -34,6 +47,7 @@ export class Input {
       this.x = nx; this.z = nz;
     });
     const end = (e: PointerEvent) => {
+      if (e.pointerId === this.lookId) { this.lookId = -1; return; }
       if (e.pointerId !== this.stickId) return;
       this.release();
     };
@@ -47,7 +61,16 @@ export class Input {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
+  /** Сколько пикселей прокрутили пальцем справа с прошлого вызова (для камеры от 3-го лица). */
+  consumeLook(): number {
+    let v = this.lookAcc; this.lookAcc = 0;
+    if (this.keys.has('KeyE')) v += 9;
+    if (this.keys.has('KeyQ')) v -= 9;
+    return v;
+  }
+
   release(): void {
+    this.lookId = -1;
     this.stickId = -1; this.x = 0; this.z = 0;
     this.base.style.display = 'none'; this.knob.style.display = 'none';
   }

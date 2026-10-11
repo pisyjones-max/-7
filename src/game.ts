@@ -132,6 +132,8 @@ export class Game {
   private zoomKick = 0;
   private lastQuip = -9;
   private camDist = 40;
+  private camYaw = Math.PI;
+  camMode: 'top' | 'chase' = save.camMode;
   private tilt = (58 * Math.PI) / 180;
   private menuT = 0;
   private last = 0;
@@ -186,6 +188,34 @@ export class Game {
     return { maxHp: 100, speed: 5.3, dmgMul: 1, rateMul: 1, multi: 1, pierce: 0, magnet: 2.6, crit: 0.06, regen: 0, bombMul: 1, bombCd: 1 };
   }
 
+  /** Применяет режим камеры: сверху (узкий FOV) или от третьего лица (широкий). */
+  applyCam(): void {
+    const chase = this.camMode === 'chase' && this.mode !== 'menu';
+    this.camera.fov = chase ? 70 : 40;
+    this.input.chase = chase;
+    this.resize();
+  }
+
+  setCamMode(m: 'top' | 'chase'): void {
+    this.camMode = m; save.camMode = m; commit();
+    this.camYaw = this.p.face;
+    this.applyCam();
+  }
+
+  toggleCam(): 'top' | 'chase' {
+    this.setCamMode(this.camMode === 'top' ? 'chase' : 'top');
+    return this.camMode;
+  }
+
+  /** Вектор движения с учётом камеры: в режиме от 3-го лица «вверх» на джойстике = вперёд по взгляду. */
+  private moveVec(out: { x: number; z: number }): void {
+    this.input.vector(out);
+    if (this.camMode !== 'chase') return;
+    const sx = out.x, sz = out.z, s = Math.sin(this.camYaw), c = Math.cos(this.camYaw);
+    out.x = s * -sz - c * sx;
+    out.z = c * -sz + s * sx;
+  }
+
   resize(): void {
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setPixelRatio(this.pr);
@@ -221,6 +251,7 @@ export class Game {
   showMenu(): void {
     this.clearWorld();
     this.mode = 'menu';
+    this.applyCam();
     this.input.setEnabled(false);
     audio.setIntense(false);
     this.setBlackout(false);
@@ -289,7 +320,7 @@ export class Game {
     const p = this.p;
     Object.assign(p, {
       x: 0, z: 10, kx: 0, kz: 0, r: def.hitR, hp: this.stats.maxHp, face: Math.PI, invuln: 1, fireCd: 0.3,
-      weapon: this.mods?.extOnly ? 'extinguisher' : 'spoon', weaponT: 0, fixedWeapon: !!this.mods?.extOnly, bombCd: 3, xp: 0, xpNext: 8, lvl: 1,
+      weapon: this.mods?.extOnly ? 'extinguisher' : 'spoon', weaponT: 0, fixedWeapon: !!this.mods?.extOnly, bombCd: 3, xp: 0, xpNext: 6, lvl: 1,
       kills: 0, runCoins: 0, combo: 0, comboT: 0, score: 0, animT: 0, moving: 0, flash: 0, lowHpSaid: false, deathTilt: 0,
     });
     this.rig.root.rotation.x = 0;
@@ -298,6 +329,8 @@ export class Game {
     this.time = 0; this.hitStop = 0; this.slowT = 0; this.shake = 0; this.zoomKick = 0; this.lastQuip = -9; this.result = null;
     this.setBlackout(false);
     this.mode = 'play';
+    this.camYaw = Math.PI;
+    this.applyCam();
     this.input.setEnabled(true);
     audio.setIntense(false);
     audio.startMusic();
@@ -364,7 +397,8 @@ export class Game {
   // ---------------------------------------------------------------- игрок
   private updatePlayer(dt: number): void {
     const p = this.p, s = this.stats;
-    this.input.vector(tmp);
+    if (this.camMode === 'chase') this.camYaw -= this.input.consumeLook() * 0.006;
+    this.moveVec(tmp);
     const mag = Math.min(1, Math.hypot(tmp.x, tmp.z));
     p.x += (tmp.x * s.speed + p.kx) * dt;
     p.z += (tmp.z * s.speed + p.kz) * dt;
@@ -376,14 +410,22 @@ export class Game {
 
     // автоприцел
     let target: Enemy | null = null, best = 15 * 15;
+    let front: Enemy | null = null, bestFront = 15 * 15;
+    const chaseView = this.camMode === 'chase';
     for (const e of this.enemies) {
       if (e.dead) continue;
       const d = (e.x - p.x) ** 2 + (e.z - p.z) ** 2;
       if (d < best) { best = d; target = e; }
+      // от 3-го лица сначала целимся в тех, кого видно перед камерой
+      if (chaseView && d < bestFront) {
+        const diff = Math.abs(lerpAngle(0, Math.atan2(e.x - p.x, e.z - p.z) - this.camYaw, 1));
+        if (diff < 1.2) { bestFront = d; front = e; }
+      }
     }
+    if (front) target = front;
     let want = p.face;
     if (target) want = Math.atan2(target.x - p.x, target.z - p.z);
-    else if (mag > 0.2) { this.input.vector(tmp); want = Math.atan2(tmp.x, tmp.z); }
+    else if (mag > 0.2) { this.moveVec(tmp); want = Math.atan2(tmp.x, tmp.z); }
     p.face = lerpAngle(p.face, want, Math.min(1, dt * 16));
 
     p.fireCd -= dt;
@@ -482,7 +524,7 @@ export class Game {
   // ---------------------------------------------------------------- волны
   private buildQueue(wave: number): EnemyKind[] {
     const boss = wave % 5 === 0;
-    const n = Math.min(70, 8 + Math.floor(wave * 3.2));
+    const n = Math.min(40, 5 + Math.floor(wave * 2));
     const wBear = wave >= 2 ? Math.min(0.45, 0.12 + wave * 0.04) : 0;
     const wFish = wave >= 3 ? Math.min(0.22, 0.05 + wave * 0.02) : 0;
     const wTank = wave >= 4 ? Math.min(0.2, 0.03 + wave * 0.02) : 0;
@@ -494,7 +536,7 @@ export class Game {
       q.push(k);
     }
     if (boss) {
-      q.length = Math.min(q.length, 6 + wave);
+      q.length = Math.min(q.length, 4 + wave);
       q.splice(3, 0, Math.floor(wave / 5) % 2 === 1 ? 'potap' : 'mutant');
     }
     return q;
@@ -505,7 +547,7 @@ export class Game {
     const w = this.wave;
     this.waveState = 'fight';
     this.queue = this.buildQueue(w);
-    this.spawnGap = Math.max(0.28, 1.05 - w * 0.05);
+    this.spawnGap = Math.max(0.5, 1.3 - w * 0.05);
     this.spawnT = 0.6;
     this.event = null;
     audio.play('wave');
@@ -522,7 +564,7 @@ export class Game {
         this.event = ev;
         setTimeout(() => this.events.banner(EVENTS[ev].title, EVENTS[ev].sub, 'event'), 1400);
         if (ev === 'blackout') this.setBlackout(true);
-        if (ev === 'rush') for (let i = 0; i < 22; i++) this.queue.push('cub');
+        if (ev === 'rush') for (let i = 0; i < 10; i++) this.queue.push('cub');
         if (ev === 'pirozhki') for (let i = 0; i < 7; i++) this.addPickup('pie', (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 24, 1);
       }
     }
@@ -560,11 +602,11 @@ export class Game {
       return;
     }
     this.spawnT -= dt;
-    const cap = this.wave % 5 === 0 ? 22 : 26;
+    const cap = this.wave % 5 === 0 ? 12 : 14;
     const alive = this.aliveCount();
     if (this.queue.length && alive < cap && this.spawnT <= 0) {
       this.spawnEnemy(this.queue.shift()!);
-      this.spawnT = this.event === 'rush' ? 0.22 : this.spawnGap;
+      this.spawnT = this.event === 'rush' ? 0.4 : this.spawnGap;
     }
     if (!this.queue.length && alive === 0) this.endWave();
   }
@@ -574,7 +616,7 @@ export class Game {
     const rig = buildBear(def);
     const w = this.wave, big = !!this.mods?.bigBears && !def.boss;
     const bossIdx = Math.floor(w / 5);
-    const hp = def.hp * (def.boss ? 1 + Math.max(0, bossIdx - 1) * 0.6 : 1 + (w - 1) * 0.13) * (big ? 1.3 : 1);
+    const hp = def.hp * (def.boss ? 1 + Math.max(0, bossIdx - 1) * 0.6 : 1 + (w - 1) * 0.16) * (big ? 1.3 : 1);
     const spd = def.speed * (def.boss ? 1 : Math.min(1.35, 1 + (w - 1) * 0.02)) * (this.mods?.fastBears ? 1.25 : 1);
     let sx = at?.x ?? 0, sz = at?.z ?? 0;
     if (!at) {
@@ -672,8 +714,8 @@ export class Game {
             break;
         }
         const f = e.hp / e.maxHp;
-        if (!e.sum1 && f < 0.5) { e.sum1 = true; this.summon(e, 5); }
-        if (!e.sum2 && f < 0.25) { e.sum2 = true; this.summon(e, 7); }
+        if (!e.sum1 && f < 0.5) { e.sum1 = true; this.summon(e, 3); }
+        if (!e.sum2 && f < 0.25) { e.sum2 = true; this.summon(e, 4); }
         // телеграф рывка
         if (e.bState === 'wind') {
           this.warnLine.visible = true;
@@ -1099,8 +1141,18 @@ export class Game {
     this.shake = Math.max(0, this.shake - real * 2.4);
     this.zoomKick = Math.max(0, this.zoomKick - real * 0.7);
     const dist = this.camDist * (1 - this.zoomKick * 0.22);
-    const tz = this.p.z * 0.22;
     const sx = (Math.random() - 0.5) * this.shake * 0.9, sz = (Math.random() - 0.5) * this.shake * 0.9;
+    if (this.camMode === 'chase') {
+      const p = this.p, fx = Math.sin(this.camYaw), fz = Math.cos(this.camYaw);
+      const back = 6.4 - this.zoomKick * 2.2;
+      const lim = ARENA.hx - 0.4, limZ = ARENA.hz - 0.4;
+      const cx = Math.max(-lim, Math.min(lim, p.x - fx * back));
+      const cz = Math.max(-limZ, Math.min(limZ, p.z - fz * back));
+      this.camera.position.set(cx + sx, 4.6 + this.zoomKick, cz + sz);
+      this.camera.lookAt(p.x + fx * 5, 1.2, p.z + fz * 5);
+      return;
+    }
+    const tz = this.p.z * 0.22;
     const px = this.zoomKick > 0 ? this.p.x * this.zoomKick * 0.5 : 0;
     this.camera.position.set(sx + px, dist * Math.sin(this.tilt), tz + dist * Math.cos(this.tilt) + sz);
     this.camera.lookAt(px, 0, tz);
