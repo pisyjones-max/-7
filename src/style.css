@@ -53,11 +53,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); o
 .screen.menu { background: linear-gradient(rgba(10,0,16,.55), rgba(10,0,16,0) 40%, rgba(10,0,16,.0) 60%, rgba(10,0,16,.75)); }
 .screen.center, .screen.list { background: rgba(14,6,20,.88); justify-content: center; }
 .screen.list { justify-content: flex-start; }
-.logo { text-align: center; line-height: .95; margin-top: 8px; }
-.logo span { display: block; font-size: 15vw; max-width: 100%; color: var(--y); letter-spacing: 1px;
-  text-shadow: 0 5px 0 #b04a10, 0 8px 0 #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000; }
-.logo span:nth-child(2) { color: #ff5a3a; text-shadow: 0 5px 0 #7a1010, 0 8px 0 #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000; }
-.logo small { display: block; margin-top: 14px; font-size: 12px; font-family: Arial, sans-serif; font-weight: 700; text-shadow: 1px 1px 0 #000; }
+.logo { text-align: center; margin-top: 6px; }
+.logo.poster { position: relative; width: 94%; max-width: 420px; padding: 14px 10px 12px; transform: rotate(-2deg);
+  background: #e9dcb9; border: 5px solid #1a0a0a; box-shadow: 6px 6px 0 #000, inset 0 0 0 3px #b80f0a;
+  background-image: repeating-linear-gradient(45deg, rgba(120,70,20,.06) 0 6px, transparent 6px 12px); }
+.logo .star { position: absolute; top: -18px; left: -14px; width: 46px; height: 46px; border-radius: 50%; background: #b80f0a; color: #ffd24a;
+  border: 4px solid #1a0a0a; font-size: 26px; line-height: 38px; text-align: center; }
+.logo span { display: block; font-family: Impact, 'Arial Black', sans-serif; text-transform: uppercase; color: #b80f0a; position: relative;
+  text-shadow: 3px 3px 0 #1a0a0a, -2px -2px 0 #1a0a0a, 2px -2px 0 #1a0a0a, -2px 2px 0 #1a0a0a; }
+.logo .l1 { font-size: 15.5vw; line-height: .95; letter-spacing: 1px; max-width: 100%; }
+.logo .l2 { font-size: 26vw; line-height: .85; margin-top: 2px; }
+@media (min-width: 500px) { .logo .l1 { font-size: 72px; } .logo .l2 { font-size: 120px; } }
+.logo .l1::after, .logo .l2::after { content: ''; position: absolute; left: 4%; right: 4%; bottom: -10px; height: 16px; pointer-events: none;
+  background: repeating-linear-gradient(90deg, #b80f0a 0 5px, transparent 5px 19px), repeating-linear-gradient(90deg, transparent 0 9px, #8a0a07 9px 13px, transparent 13px 31px);
+  -webkit-mask: linear-gradient(#000, #000) top / 100% 5px no-repeat, repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 19px) bottom / 100% 16px no-repeat; }
+.logo .band { display: inline-block; margin-top: 16px; padding: 3px 18px; background: #1a0a0a; color: #e9dcb9; font: 900 20px Impact, 'Arial Black', sans-serif; letter-spacing: 6px; font-style: normal; transform: skew(-8deg); }
+.logo small { display: block; margin-top: 8px; font: 800 11px Arial, sans-serif; color: #1a0a0a; letter-spacing: .5px; }
 .stats { display: flex; gap: 14px; font-size: 16px; text-shadow: 2px 2px 0 #000; }
 .spacer { flex: 1; }
 .toast { background: var(--g); color: #000; padding: 6px 12px; border: 3px solid #000; font-size: 13px; }
@@ -92,4 +103,4 @@ h2 { margin: 0; font-size: 28px; color: var(--y); text-shadow: 3px 3px 0 #000; }
 @keyframes rise { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -46px; } }
 @keyframes pulse { 50% { transform: scale(1.05); } }
 @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
-@media (max-height: 640px) { .logo span { font-size: 11vw; } .btn.big { font-size: 22px; padding: 10px; } }
+@media (max-height: 640px) { .logo .l1 { font-size: 11vw; } .logo .l2 { font-size: 17vw; } .btn.big { font-size: 22px; padding: 10px; } }

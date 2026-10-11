@@ -125,7 +125,7 @@ export class UI implements GameEvents {
     const reward = 50 + Math.min(save.streak + 1, 7) * 25;
     this.screens.innerHTML = `
       <div class="screen menu">
-        <div class="logo"><span>МЕДВЕДО</span><span>КАЛИПСИС</span><small>столовая №7 · обед уже начался</small></div>
+        <div class="logo poster"><div class="star">★</div><span class="l1">СТОЛОВАЯ</span><span class="l2">№7</span><i class="band">КРОВАВАЯ</i><small>ТОВАРИЩ! ОБЕД НАЧАЛСЯ. ДЕРЖИ ПОВАРЁШКУ!</small></div>
         <div class="stats"><b>🪙 ${save.coins}</b><b>🏆 ${save.best}</b></div>
         ${toast ? `<div class="toast">${toast}</div>` : ''}
         <div class="spacer"></div>
@@ -196,7 +196,7 @@ export class UI implements GameEvents {
 
   private async share(): Promise<void> {
     const r = this.lastResult; if (!r) return;
-    const text = `Я продержался ${r.wave} волн в МЕДВЕДОКАЛИПСИСЕ! «${r.title}». Счёт: ${r.score} 🐻 #медведокалипсис`;
+    const text = `Я продержался ${r.wave} волн в «Столовой №7»! «${r.title}». Счёт: ${r.score} 🐻 #столовая7`;
     const blob = await this.game.makeCard([r.title, `Волна ${r.wave} · ${r.kills} медведей`, `Счёт: ${r.score}`, r.rank]);
     try {
       const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };

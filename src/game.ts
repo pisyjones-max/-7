@@ -338,7 +338,7 @@ export class Game {
       this.events.banner('ХОДИ ПАЛЬЦЕМ', 'Стреляешь сам. Справа — БОРЩ-БОМБА!', 'info');
       save.tutorialSeen = true; commit();
     } else {
-      this.events.banner('СТОЛОВАЯ №7', 'Обед начинается…', 'info');
+      this.events.banner('КРОВАВЫЙ ОБЕД', 'Столовая №7 открыта. Приятного аппетита!', 'info');
     }
   }
 
@@ -1185,7 +1185,7 @@ export class Game {
       grad.addColorStop(0, 'rgba(10,0,10,0)'); grad.addColorStop(1, 'rgba(10,0,10,0.92)');
       g.fillStyle = grad; g.fillRect(0, H * 0.45, W, H * 0.55);
       g.textAlign = 'center';
-      g.fillStyle = '#ffd24a'; g.font = '900 54px Arial, sans-serif'; g.fillText('МЕДВЕДОКАЛИПСИС', W / 2, 90);
+      g.fillStyle = '#ffd24a'; g.font = '900 54px Arial, sans-serif'; g.fillText('СТОЛОВАЯ №7', W / 2, 90);
       g.fillStyle = '#fff';
       let y = H - 60 - lines.length * 46;
       lines.forEach((l, i) => { g.font = (i === 0 ? '900 40px' : '700 30px') + ' Arial, sans-serif'; g.fillText(l, W / 2, y); y += i === 0 ? 56 : 44; });
