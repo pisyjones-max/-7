@@ -77,12 +77,12 @@ export interface EnemyDef {
 }
 
 export const ENEMIES: Record<EnemyKind, EnemyDef> = {
-  cub: { id: 'cub', name: 'Мишка-наглец', hp: 22, speed: 4.0, dmg: 8, size: 0.62, radius: 0.38, xp: 1, coins: 1, armor: 0, score: 10, boss: false, fur: 0xc98b4a, belly: 0xf0d0a0, killedBy: ['Задавлен мишкой ростом с табуретку', 'Побеждён наглым медвежонком', 'Обокраден и добит малышнёй'] },
-  bear: { id: 'bear', name: 'Медведь', hp: 66, speed: 2.7, dmg: 15, size: 1.0, radius: 0.62, xp: 3, coins: 2, armor: 0, score: 30, boss: false, fur: 0x7a4a26, belly: 0xc29a6a, killedBy: ['Обнят медведем. Навсегда.', 'Съеден вместе с компотом', 'Не договорился с медведем'] },
-  tank: { id: 'tank', name: 'Бронемишка', hp: 240, speed: 1.75, dmg: 24, size: 1.3, radius: 0.8, xp: 8, coins: 6, armor: 0.45, score: 100, boss: false, fur: 0x4a3020, belly: 0x8a6a4a, killedBy: ['Раздавлен бронемишкой в кастрюле', 'Не пробил кастрюлю', 'Проиграл кастрюле в лоб'] },
-  fisher: { id: 'fisher', name: 'Медведь-рыбак', hp: 44, speed: 2.4, dmg: 10, size: 0.95, radius: 0.55, xp: 3, coins: 3, armor: 0, score: 40, boss: false, fur: 0x6e5a3a, belly: 0xc2a77a, killedBy: ['Убит рыбой. Просто рыбой.', 'Закидан сёмгой', 'Получил щукой по лицу'] },
-  potap: { id: 'potap', name: 'Михаил Потапыч', hp: 1500, speed: 2.3, dmg: 28, size: 2.1, radius: 1.25, xp: 40, coins: 60, armor: 0.15, score: 1000, boss: true, fur: 0x6b4423, belly: 0xd9b080, killedBy: ['Лично разобран Михаилом Потапычем', 'Потапыч пришёл за добавкой'] },
-  mutant: { id: 'mutant', name: 'Мутант Топтыгин', hp: 2600, speed: 2.5, dmg: 32, size: 2.4, radius: 1.4, xp: 70, coins: 120, armor: 0.2, score: 2500, boss: true, fur: 0x4fd16a, belly: 0xb6ffb0, killedBy: ['Растворён мутантом Топтыгиным', 'Радиоактивный медведь был сильнее'] },
+  cub: { id: 'cub', name: 'Мишка-наглец', hp: 30, speed: 4.0, dmg: 8, size: 0.95, radius: 0.55, xp: 1, coins: 1, armor: 0, score: 10, boss: false, fur: 0xc98b4a, belly: 0xf0d0a0, killedBy: ['Задавлен мишкой ростом с табуретку', 'Побеждён наглым медвежонком', 'Обокраден и добит малышнёй'] },
+  bear: { id: 'bear', name: 'Медведь', hp: 85, speed: 2.7, dmg: 15, size: 1.6, radius: 0.95, xp: 3, coins: 2, armor: 0, score: 30, boss: false, fur: 0x7a4a26, belly: 0xc29a6a, killedBy: ['Обнят медведем. Навсегда.', 'Съеден вместе с компотом', 'Не договорился с медведем'] },
+  tank: { id: 'tank', name: 'Бронемишка', hp: 300, speed: 1.75, dmg: 24, size: 2.0, radius: 1.15, xp: 8, coins: 6, armor: 0.45, score: 100, boss: false, fur: 0x4a3020, belly: 0x8a6a4a, killedBy: ['Раздавлен бронемишкой в кастрюле', 'Не пробил кастрюлю', 'Проиграл кастрюле в лоб'] },
+  fisher: { id: 'fisher', name: 'Медведь-рыбак', hp: 58, speed: 2.4, dmg: 10, size: 1.45, radius: 0.85, xp: 3, coins: 3, armor: 0, score: 40, boss: false, fur: 0x6e5a3a, belly: 0xc2a77a, killedBy: ['Убит рыбой. Просто рыбой.', 'Закидан сёмгой', 'Получил щукой по лицу'] },
+  potap: { id: 'potap', name: 'Михаил Потапыч', hp: 1500, speed: 2.3, dmg: 28, size: 3.0, radius: 1.5, xp: 40, coins: 60, armor: 0.15, score: 1000, boss: true, fur: 0x6b4423, belly: 0xd9b080, killedBy: ['Лично разобран Михаилом Потапычем', 'Потапыч пришёл за добавкой'] },
+  mutant: { id: 'mutant', name: 'Мутант Топтыгин', hp: 2600, speed: 2.5, dmg: 32, size: 3.3, radius: 1.65, xp: 70, coins: 120, armor: 0.2, score: 2500, boss: true, fur: 0x4fd16a, belly: 0xb6ffb0, killedBy: ['Растворён мутантом Топтыгиным', 'Радиоактивный медведь был сильнее'] },
 };
 
 export interface Stats {

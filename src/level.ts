@@ -87,7 +87,7 @@ export function buildCanteen(scene: THREE.Scene): Level {
   const trayCols = [0x3b6ea5, 0xb04a3a, 0x3b9a6a];
   for (const z of rows) {
     for (const s of [-1, 1]) {
-      const x = s * 3.3;
+      const x = s * 3.5;
       parts.push(box(3.0, 0.12, 1.4, x, 0.84, z, 0xc8a26a), box(3.1, 0.04, 1.5, x, 0.76, z, 0x8a6a3a));
       for (const lx of [-1.3, 1.3]) for (const lz of [-0.55, 0.55]) parts.push(box(0.12, 0.8, 0.12, x + lx, 0.4, z + lz, 0x4a3a28));
       // подносы с едой

@@ -4,7 +4,7 @@ import {
   UPGRADES, WAVE_SUBS, WEAPONS, pick, todayMutator,
   type CharDef, type EnemyDef, type EnemyKind, type Mutator, type Stats, type UpgradeDef, type WeaponDef,
 } from './data';
-import { animateRig, box, buildBear, buildHuman, flashMat, merge, setFlash, vcMat, warnMat, type Rig } from './models';
+import { animateBear, animateRig, box, buildBear, buildHuman, flashMat, merge, setFlash, vcMat, warnMat, type Rig } from './models';
 import { ARENA, buildCanteen, resolveCircle, type Level } from './level';
 import type { Input } from './input';
 import { audio } from './audio';
@@ -34,7 +34,7 @@ interface Enemy {
   def: EnemyDef; rig: Rig; x: number; z: number; vx: number; vz: number; hp: number; maxHp: number; r: number;
   spd: number; dmg: number; flash: number; atkCd: number; t: number; face: number; stun: number; slow: number;
   shootCd: number; side: number; dead: boolean; deadT: number; fvx: number; fvz: number; fy: number; fvy: number;
-  lunge: number; lungeCd: number; enraged: boolean;
+  lunge: number; lungeCd: number; enraged: boolean; rear: number; rearT: number; rearCd: number;
   bState: 'chase' | 'wind' | 'charge' | 'rest'; bT: number; bCd: number; cx: number; cz: number; sum1: boolean; sum2: boolean; ring: number;
 }
 interface Proj { x: number; z: number; vx: number; vz: number; life: number; dmg: number; pierce: number; w: WeaponDef; hit: Enemy[]; crit: boolean; ang: number }
@@ -275,7 +275,7 @@ export class Game {
     this.rig.root.position.set(0, Math.abs(Math.sin(t * 3)) * 0.12, 8.3);
     this.rig.root.rotation.y = Math.sin(t * 0.7) * 0.6;
     animateRig(this.rig, t, 0, true, true);
-    const pos = [[-2.3, 6.4], [2.3, 6.7], [-2.5, 10.0], [0.2, 4.6]];
+    const pos = [[-3.1, 6.0], [3.1, 6.4], [-3.2, 10.4], [0.3, 3.4]];
     this.menuProps.forEach((r, i) => {
       r.root.position.set(pos[i][0], Math.abs(Math.sin(t * 5 + i * 1.7)) * 0.35, pos[i][1]);
       r.root.rotation.y = Math.atan2(-pos[i][0], 8.3 - pos[i][1]) + Math.sin(t * 2 + i) * 0.3;
@@ -633,7 +633,7 @@ export class Game {
     const e: Enemy = {
       def, rig, x: sx, z: sz, vx: 0, vz: 0, hp, maxHp: hp, r: def.radius * (big ? 1.25 : 1), spd, dmg: def.dmg * (1 + (w - 1) * 0.04),
       flash: 0, atkCd: 0.6, t: Math.random() * 6, face: 0, stun: 0, slow: 0, shootCd: 1 + Math.random() * 1.5, side: Math.random() < 0.5 ? -1 : 1,
-      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
+      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, rear: 0, rearT: 0, rearCd: 2 + Math.random() * 4, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
     };
     this.enemies.push(e);
     this.burst(sx, 0.6, sz, 8, [0xd8d0c0, 0xaaa090], 3, 2, 0.2, 0.5, 8);
@@ -677,18 +677,31 @@ export class Game {
         this.burst(e.x, 1.6 * e.def.size, e.z, 6, [0xff3020, 0xffa030], 3, 3, 0.14, 0.5);
         if (Math.random() < 0.4) this.say('РРРЫЫЫ! ТЫ МЕНЯ ЗЛИШЬ!', 'b');
       }
+      // ВСТАЁТ НА ЗАДНИЕ ЛАПЫ: пугает, потом бросается
+      if (!e.def.boss && e.def.id !== 'fisher' && this.mode === 'play') {
+        e.rearCd -= dt;
+        if (e.rearT > 0) {
+          e.rearT -= dt; speed *= 0.1;
+          if (e.rearT <= 0) { e.lunge = 0.5; e.lungeCd = 2.2; }
+        } else if (e.rearCd <= 0 && dist < 7 && dist > 2.4 && e.stun <= 0) {
+          e.rearT = 0.9; e.rearCd = 5 + Math.random() * 4;
+          if (Math.random() < 0.5) audio.play('roar');
+          if (Math.random() < 0.15) this.say(pick(BEAR_QUIPS), 'b');
+          this.shake = Math.min(1, this.shake + 0.1);
+        }
+      }
       // БРОСОК: близкие медведи прыгают на игрока
       if (!e.def.boss && e.def.id !== 'fisher' && this.mode === 'play') {
         e.lungeCd -= dt;
         if (e.lunge > 0) { e.lunge -= dt; speed *= 2.4; }
-        else if (e.lungeCd <= 0 && dist < 4.2 && dist > 1.2 && e.stun <= 0) { e.lunge = 0.35; e.lungeCd = 2.5 + Math.random() * 1.5; if (Math.random() < 0.35) audio.play('roar'); }
+        else if (e.lungeCd <= 0 && e.rearT <= 0 && dist < 4.2 && dist > 1.2 && e.stun <= 0) { e.lunge = 0.35; e.lungeCd = 2.5 + Math.random() * 1.5; if (Math.random() < 0.35) audio.play('roar'); }
       }
 
       if (e.def.id === 'fisher') {
         if (dist < 5.5) { mx = -nx; mz = -nz; } else if (dist > 8.5) { mx = nx; mz = nz; } else { mx = -nz * e.side; mz = nx * e.side; }
-        e.shootCd -= dt;
+        e.shootCd -= dt; if (e.rearT > 0) e.rearT -= dt;
         if (e.shootCd <= 0 && dist < 14 && e.stun <= 0 && this.mode === 'play') {
-          e.shootCd = 2.3 + Math.random() * 0.8;
+          e.shootCd = 2.3 + Math.random() * 0.8; e.rearT = 0.7;
           this.fireFish(e, Math.atan2(nx, nz), e.dmg * 0.9);
         }
       } else if (e.def.boss) {
@@ -743,7 +756,9 @@ export class Game {
       e.face = lerpAngle(e.face, face, Math.min(1, dt * 10));
       e.rig.root.position.set(e.x, 0, e.z);
       e.rig.root.rotation.y = e.face;
-      animateRig(e.rig, e.t * (0.5 + e.spd / 4), speed > 0.1 ? 1 : 0.15, false, false);
+      const wantRear = e.rearT > 0 || (e.def.boss && e.bState === 'wind') ? 1 : 0;
+      e.rear += (wantRear - e.rear) * Math.min(1, dt * 8);
+      animateBear(e.rig, e.t * (0.5 + e.spd / 4), speed > 0.1 ? 1 : 0.15, e.rear);
     }
     // расталкивание
     for (let i = 0; i < alive.length; i++) {
@@ -1129,7 +1144,7 @@ export class Game {
     };
     if (this.mode === 'menu') {
       put(0, 8.3, 1.1);
-      this.menuProps.forEach((r, i) => put(r.root.position.x, r.root.position.z, [0.9, 1.5, 1.4, 2.1][i]));
+      this.menuProps.forEach((r, i) => put(r.root.position.x, r.root.position.z, [1.6, 2.6, 2.3, 3.4][i]));
     } else {
       if (this.mode !== 'over') put(this.p.x, this.p.z, this.charDef.hitR * 2.6);
       for (const e of this.enemies) put(e.x, e.z, e.r * 2.5, e.dead ? Math.max(0, e.fy) : 0);

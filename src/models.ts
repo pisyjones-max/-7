@@ -38,6 +38,7 @@ export interface Rig {
   armL: THREE.Mesh;
   armR: THREE.Mesh;
   meshes: THREE.Mesh[];
+  pitch: THREE.Group | null;
 }
 
 interface GeoSet { body: Geo; head: Geo; leg: Geo; armL: Geo; armR: Geo }
@@ -58,7 +59,44 @@ function assemble(set: GeoSet, pos: { legY: number; legX: number; bodyY: number;
   const armL = mesh(set.armL, -pos.armX, pos.armY, 0);
   const armR = mesh(set.armR, pos.armX, pos.armY, 0);
   root.add(legL, legR, body, head, armL, armR);
-  return { root, body, head, legL, legR, armL, armR, meshes: [legL, legR, body, head, armL, armR] };
+  return { root, body, head, legL, legR, armL, armR, meshes: [legL, legR, body, head, armL, armR], pitch: null };
+}
+
+/** Медведь: туловище на «шарнире» в бёдрах — может идти на четырёх лапах или вставать на задние. */
+function assembleBear(set: GeoSet): Rig {
+  const root = new THREE.Group();
+  const pitch = new THREE.Group();
+  pitch.position.set(0, 0.78, 0);
+  const legL = mesh(set.leg, -0.24, 0.45, 0);
+  const legR = mesh(set.leg, 0.24, 0.45, 0);
+  const body = mesh(set.body, 0, 0.1, 0);
+  const head = mesh(set.head, 0, 0.87, 0);
+  const armL = mesh(set.armL, -0.6, 0.42, 0);
+  const armR = mesh(set.armR, 0.6, 0.42, 0);
+  pitch.add(body, head, armL, armR);
+  root.add(legL, legR, pitch);
+  return { root, body, head, legL, legR, armL, armR, meshes: [legL, legR, body, head, armL, armR], pitch };
+}
+
+/** rear: 0 = на четырёх лапах, 1 = встал во весь рост и пугает. */
+export function animateBear(rig: Rig, t: number, moving: number, rear: number): void {
+  const quad = 1 - rear;
+  const pitch = quad * Math.PI * 0.46;
+  const p = rig.pitch!;
+  p.rotation.x = pitch;
+  p.position.y = 0.78 + Math.abs(Math.sin(t * 11)) * 0.07 * moving * quad;
+  rig.body.scale.y = 1 + quad * 0.5;
+  rig.body.position.y = 0.1 + quad * 0.1;
+  const swing = Math.sin(t * 11) * 0.75 * moving;
+  rig.legL.rotation.x = -swing * quad + rear * Math.sin(t * 6) * 0.1;
+  rig.legR.rotation.x = swing * quad - rear * Math.sin(t * 6) * 0.1;
+  rig.legL.position.z = rig.legR.position.z = -0.12 * quad;
+  const wave = Math.sin(t * 10) * 0.35;
+  rig.armL.rotation.x = -pitch + swing * quad + rear * (-2.3 + wave);
+  rig.armR.rotation.x = -pitch - swing * quad + rear * (-2.3 - wave);
+  rig.armL.rotation.z = -0.35 * rear; rig.armR.rotation.z = 0.35 * rear;
+  rig.head.position.y = 0.87 - quad * 0.12;
+  rig.head.rotation.x = -pitch * 0.82 - rear * (0.2 + 0.18 * Math.sin(t * 22));
 }
 
 // ---------------- ЛЮДИ ----------------
@@ -159,8 +197,8 @@ export function buildBear(def: EnemyDef): Rig {
     set = { body: merge(bodyP), head: merge(headP), leg: merge(legP), armL: merge(armLP), armR: merge(armRP) };
     cache.set('b' + def.id, set);
   }
-  const rig = assemble(set, { legY: 0.45, legX: 0.24, bodyY: 0.88, headY: 1.65, armY: 1.2, armX: 0.6 });
-  if (def.id === 'cub') rig.head.scale.setScalar(1.28);
+  const rig = assembleBear(set);
+  rig.head.scale.setScalar(def.id === 'cub' ? 1.28 : 1.15);
   rig.root.scale.setScalar(def.size);
   return rig;
 }
