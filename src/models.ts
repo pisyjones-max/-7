@@ -10,8 +10,9 @@ export const warnMat = new THREE.MeshBasicMaterial({ color: 0xff3a2a });
 
 type Geo = THREE.BufferGeometry;
 
-export function box(w: number, h: number, d: number, x: number, y: number, z: number, color: number): Geo {
+export function box(w: number, h: number, d: number, x: number, y: number, z: number, color: number, rotZ = 0): Geo {
   const g = new THREE.BoxGeometry(w, h, d);
+  if (rotZ) g.rotateZ(rotZ);
   g.translate(x, y, z);
   const c = new THREE.Color(color);
   const n = g.attributes.position.count;
@@ -113,7 +114,7 @@ export function buildBear(def: EnemyDef): Rig {
   const belly = def.belly;
   if (!set) {
     const boss = def.boss;
-    const eyeCol = def.id === 'mutant' ? 0xffee00 : boss ? 0xff2a2a : 0x111111;
+    const eyeCol = def.id === 'mutant' ? 0xffee00 : 0xff1a1a;
     const headP: Geo[] = [
       box(0.75, 0.65, 0.65, 0, 0, 0, fur),
       box(0.36, 0.26, 0.25, 0, -0.1, 0.4, belly),
@@ -122,8 +123,9 @@ export function buildBear(def: EnemyDef): Rig {
       box(0.12, 0.12, 0.02, -0.3, 0.38, 0.07, 0x5a3a2a), box(0.12, 0.12, 0.02, 0.3, 0.38, 0.07, 0x5a3a2a),
       box(0.15, 0.1, 0.02, -0.17, 0.1, 0.33, 0xffffff), box(0.15, 0.1, 0.02, 0.17, 0.1, 0.33, 0xffffff),
       box(0.07, 0.08, 0.02, -0.15, 0.1, 0.34, eyeCol), box(0.07, 0.08, 0.02, 0.15, 0.1, 0.34, eyeCol),
-      box(0.22, 0.05, 0.02, -0.17, 0.21, 0.34, 0x111111), box(0.22, 0.05, 0.02, 0.17, 0.21, 0.34, 0x111111),
-      box(0.06, 0.06, 0.02, -0.1, -0.2, 0.52, 0xffffff), box(0.06, 0.06, 0.02, 0.1, -0.2, 0.52, 0xffffff),
+      box(0.26, 0.07, 0.03, -0.16, 0.2, 0.35, 0x111111, -0.5), box(0.26, 0.07, 0.03, 0.16, 0.2, 0.35, 0x111111, 0.5),
+      box(0.3, 0.1, 0.02, 0, -0.2, 0.52, 0x5a0a0a),
+      box(0.06, 0.09, 0.03, -0.11, -0.17, 0.53, 0xffffff), box(0.06, 0.09, 0.03, 0.11, -0.17, 0.53, 0xffffff), box(0.05, 0.07, 0.03, -0.03, -0.18, 0.53, 0xffffff), box(0.05, 0.07, 0.03, 0.03, -0.18, 0.53, 0xffffff),
     ];
     const bodyP: Geo[] = [box(0.95, 0.85, 0.7, 0, 0, 0, fur), box(0.66, 0.6, 0.02, 0, -0.04, 0.36, belly)];
     const legP: Geo[] = [box(0.3, 0.45, 0.32, 0, -0.225, 0, fur), box(0.32, 0.08, 0.36, 0, -0.4, 0.03, 0x2a1a10)];

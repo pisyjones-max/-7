@@ -34,6 +34,7 @@ interface Enemy {
   def: EnemyDef; rig: Rig; x: number; z: number; vx: number; vz: number; hp: number; maxHp: number; r: number;
   spd: number; dmg: number; flash: number; atkCd: number; t: number; face: number; stun: number; slow: number;
   shootCd: number; side: number; dead: boolean; deadT: number; fvx: number; fvz: number; fy: number; fvy: number;
+  lunge: number; lungeCd: number; enraged: boolean;
   bState: 'chase' | 'wind' | 'charge' | 'rest'; bT: number; bCd: number; cx: number; cz: number; sum1: boolean; sum2: boolean; ring: number;
 }
 interface Proj { x: number; z: number; vx: number; vz: number; life: number; dmg: number; pierce: number; w: WeaponDef; hit: Enemy[]; crit: boolean; ang: number }
@@ -590,7 +591,7 @@ export class Game {
     const e: Enemy = {
       def, rig, x: sx, z: sz, vx: 0, vz: 0, hp, maxHp: hp, r: def.radius * (big ? 1.25 : 1), spd, dmg: def.dmg * (1 + (w - 1) * 0.04),
       flash: 0, atkCd: 0.6, t: Math.random() * 6, face: 0, stun: 0, slow: 0, shootCd: 1 + Math.random() * 1.5, side: Math.random() < 0.5 ? -1 : 1,
-      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
+      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
     };
     this.enemies.push(e);
     this.burst(sx, 0.6, sz, 8, [0xd8d0c0, 0xaaa090], 3, 2, 0.2, 0.5, 8);
@@ -628,6 +629,18 @@ export class Game {
       let mx = nx, mz = nz, speed = e.spd * (e.slow > 0 ? 0.5 : 1);
       if (e.stun > 0) speed = 0;
       let contactMul = 1;
+      // ЯРОСТЬ: при низком здоровье медведь звереет
+      if (!e.enraged && !e.def.boss && e.hp < e.maxHp * 0.5) {
+        e.enraged = true; e.spd *= 1.3; e.dmg *= 1.2;
+        this.burst(e.x, 1.6 * e.def.size, e.z, 6, [0xff3020, 0xffa030], 3, 3, 0.14, 0.5);
+        if (Math.random() < 0.4) this.say('РРРЫЫЫ! ТЫ МЕНЯ ЗЛИШЬ!', 'b');
+      }
+      // БРОСОК: близкие медведи прыгают на игрока
+      if (!e.def.boss && e.def.id !== 'fisher' && this.mode === 'play') {
+        e.lungeCd -= dt;
+        if (e.lunge > 0) { e.lunge -= dt; speed *= 2.4; }
+        else if (e.lungeCd <= 0 && dist < 4.2 && dist > 1.2 && e.stun <= 0) { e.lunge = 0.35; e.lungeCd = 2.5 + Math.random() * 1.5; if (Math.random() < 0.35) audio.play('roar'); }
+      }
 
       if (e.def.id === 'fisher') {
         if (dist < 5.5) { mx = -nx; mz = -nz; } else if (dist > 8.5) { mx = nx; mz = nz; } else { mx = -nz * e.side; mz = nx * e.side; }
