@@ -152,7 +152,7 @@ export function buildBear(def: EnemyDef): Rig {
   const belly = def.belly;
   if (!set) {
     const boss = def.boss;
-    const eyeCol = def.id === 'mutant' ? 0xffee00 : 0xff1a1a;
+    const eyeCol = def.id === 'mutant' ? 0xffee00 : def.id === 'dog' ? 0xffc010 : 0xff1a1a;
     const headP: Geo[] = [
       box(0.75, 0.65, 0.65, 0, 0, 0, fur),
       box(0.36, 0.26, 0.25, 0, -0.1, 0.4, belly),
@@ -173,6 +173,10 @@ export function buildBear(def: EnemyDef): Rig {
     switch (def.id) {
       case 'cub':
         headP.push(box(0.2, 0.08, 0.04, 0, -0.27, 0.34, 0xdd3333)); // язык наглеца
+        break;
+      case 'dog':
+        headP.push(box(0.13, 0.34, 0.1, -0.2, 0.52, 0, fur), box(0.13, 0.34, 0.1, 0.2, 0.52, 0, fur), box(0.3, 0.2, 0.3, 0, -0.1, 0.62, belly), box(0.14, 0.2, 0.04, 0, -0.3, 0.5, 0xdd3355));
+        bodyP.push(box(0.14, 0.55, 0.14, 0, -0.62, -0.1, fur));
         break;
       case 'tank': // кастрюля-шлем и нагрудник из крышек
         headP.push(box(0.92, 0.42, 0.92, 0, 0.5, 0, 0x9aa0a8), box(0.22, 0.12, 0.14, -0.57, 0.5, 0, 0x6a7078), box(0.22, 0.12, 0.14, 0.57, 0.5, 0, 0x6a7078), box(0.6, 0.06, 0.04, 0, 0.3, 0.46, 0x666c74));

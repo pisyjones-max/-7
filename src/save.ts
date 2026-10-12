@@ -5,6 +5,7 @@ export interface ScoreRow {
   wave: number;
   kills: number;
   date: string;
+  loc?: string;
 }
 
 export interface SaveData {
@@ -22,13 +23,15 @@ export interface SaveData {
   mutator: boolean;
   tutorialSeen: boolean;
   camMode: 'top' | 'chase';
+  loc: string;
+  locUnlocked: string[];
 }
 
 const KEY = 'medvedokalipsis_save_v1';
 
 const DEFAULT: SaveData = {
   coins: 0, best: 0, unlocked: ['vasya'], selected: 'vasya', scores: [], streak: 0, lastDaily: '',
-  kills: 0, runs: 0, muted: false, nick: 'Аноним', mutator: false, tutorialSeen: false, camMode: 'top',
+  kills: 0, runs: 0, muted: false, nick: 'Аноним', mutator: false, tutorialSeen: false, camMode: 'top', loc: 'canteen', locUnlocked: ['canteen'],
 };
 
 function load(): SaveData {
@@ -36,7 +39,7 @@ function load(): SaveData {
     const raw = localStorage.getItem(KEY);
     if (raw) return { ...DEFAULT, ...JSON.parse(raw) };
   } catch { /* ignore */ }
-  return { ...DEFAULT, unlocked: ['vasya'], scores: [] };
+  return { ...DEFAULT, unlocked: ['vasya'], scores: [], locUnlocked: ['canteen'] };
 }
 
 export const save: SaveData = load();
@@ -49,9 +52,9 @@ export function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function addScore(name: string, score: number, wave: number, kills: number): number {
+export function addScore(name: string, score: number, wave: number, kills: number, loc = ''): number {
   const id = Date.now() + Math.floor(Math.random() * 1000);
-  save.scores.push({ id, name, score, wave, kills, date: today() });
+  save.scores.push({ id, name, score, wave, kills, date: today(), loc });
   save.scores.sort((a, b) => b.score - a.score);
   save.scores = save.scores.slice(0, 10);
   commit();

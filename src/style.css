@@ -104,3 +104,10 @@ h2 { margin: 0; font-size: 28px; color: var(--y); text-shadow: 3px 3px 0 #000; }
 @keyframes pulse { 50% { transform: scale(1.05); } }
 @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
 @media (max-height: 640px) { .logo .l1 { font-size: 11vw; } .logo .l2 { font-size: 17vw; } .btn.big { font-size: 22px; padding: 10px; } }
+
+#upBtn { position: absolute; right: 14px; top: 116px; width: 64px; height: 64px; border-radius: 12px; border: 4px solid #000; background: #3a3a48; color: #fff;
+  pointer-events: auto; font-family: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: .8; touch-action: none; }
+#upBtn span { font-size: 24px; line-height: 24px; } #upBtn b { position: absolute; top: -10px; right: -10px; min-width: 24px; height: 24px; border-radius: 12px; background: #888; border: 3px solid #000; font-size: 13px; line-height: 18px; }
+#upBtn small { font-size: 8px; text-shadow: 1px 1px 0 #000; }
+#upBtn.has { background: linear-gradient(#ffd24a,#d9941a); opacity: 1; animation: pulse .7s infinite; } #upBtn.has b { background: var(--r); }
+.screen.menu { overflow-y: auto; }

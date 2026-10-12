@@ -1,4 +1,5 @@
-import { CHARS, WEAPONS, todayMutator, type UpgradeDef } from './data';
+import { CHARS, todayMutator, type UpgradeDef } from './data';
+import { LOCATIONS } from './level';
 import type { Game, GameEvents, HudState, RunResult } from './game';
 import type { Input } from './input';
 import { audio } from './audio';
@@ -20,6 +21,7 @@ export class UI implements GameEvents {
   private bannerT = 0;
   private lastResult: RunResult | null = null;
   private lastRowId = 0;
+  private points = 0;
 
   constructor(private root: HTMLElement) {
     root.innerHTML = `
@@ -41,6 +43,7 @@ export class UI implements GameEvents {
         <div id="combo" class="combo hidden"></div>
         <div id="weapon" class="weapon hidden"><span id="wIcon"></span><div class="bar"><i id="wFill"></i></div></div>
         <div id="floats"></div>
+        <button id="upBtn"><span>⭐</span><b id="upCount">0</b><small>ПРОКАЧКА</small></button>
         <button id="bombBtn"><span>🍲</span><small>БОРЩ</small><div id="bombCd"></div></button>
         <div id="hurtFlash"></div>
       </div>
@@ -58,6 +61,11 @@ export class UI implements GameEvents {
     game.events = this;
     const bomb = $(this.root, '#bombBtn');
     bomb.addEventListener('pointerdown', e => { e.preventDefault(); input.bombPressed = true; });
+    $(this.root, '#upBtn').addEventListener('pointerdown', e => {
+      e.preventDefault();
+      if (this.points > 0) game.openUpgrades();
+      else this.banner('ОЧКОВ НЕТ', 'Убивай медведей — набирай уровни', 'info');
+    });
     $(this.root, '#camBtn').addEventListener('click', () => {
       const m = game.toggleCam();
       this.banner(m === 'chase' ? 'ВИД ОТ 3-ГО ЛИЦА' : 'ВИД СВЕРХУ', m === 'chase' ? 'Слева — ходить, справа свайп — крутить камеру' : 'Классика', 'info');
@@ -90,6 +98,14 @@ export class UI implements GameEvents {
       case 'chars': this.chars(); break;
       case 'scores': this.scoresScreen(); break;
       case 'sound': save.muted = !save.muted; audio.setMuted(save.muted); commit(); this.menu(); break;
+      case 'locs': this.locsScreen(); break;
+      case 'loc': {
+        const l = LOCATIONS.find(x => x.id === arg)!;
+        if (save.locUnlocked.includes(l.id)) { g.setLocation(l.id); save.loc = l.id; }
+        else if (save.coins >= l.cost) { save.coins -= l.cost; save.locUnlocked.push(l.id); g.setLocation(l.id); save.loc = l.id; audio.play('levelup'); }
+        commit(); this.locsScreen(); break;
+      }
+      case 'skipUp': this.screens.innerHTML = ''; g.cancelChoose(); break;
       case 'cam': g.setCamMode(save.camMode === 'top' ? 'chase' : 'top'); this.menu(); break;
       case 'mut': save.mutator = !save.mutator; commit(); this.menu(); break;
       case 'daily': this.claimDaily(); break;
@@ -131,7 +147,10 @@ export class UI implements GameEvents {
         <div class="spacer"></div>
         ${canDaily ? `<button class="btn gold" data-act="daily">🎁 ЕЖЕДНЕВНЫЙ ПОДАРОК +${reward}🪙</button>` : ''}
         <button class="btn mut ${save.mutator ? 'on' : ''}" data-act="mut"><b>${save.mutator ? '✅' : '⬜'} Мутатор дня: ${m.name}</b><small>${m.desc} · монеты x1.5</small></button>
-        <button class="btn" data-act="cam">🎥 КАМЕРА: ${save.camMode === 'chase' ? 'ОТ 3-ГО ЛИЦА' : 'СВЕРХУ'}</button>
+        <div class="row">
+          <button class="btn" data-act="locs">🗺 ${LOCATIONS.find(l => l.id === save.loc)?.name ?? ''}<small>сменить локацию</small></button>
+          <button class="btn" data-act="cam">🎥 ${save.camMode === 'chase' ? 'ОТ 3-ГО ЛИЦА' : 'СВЕРХУ'}<small>камера</small></button>
+        </div>
         <button class="btn big" data-act="play">▶ ИГРАТЬ <small>за ${c.emoji} ${c.name}</small></button>
         <div class="row">
           <button class="btn" data-act="chars">🧍 ГЕРОИ</button>
@@ -139,6 +158,21 @@ export class UI implements GameEvents {
           <button class="btn sq" data-act="sound">${save.muted ? '🔇' : '🔊'}</button>
         </div>
       </div>`;
+  }
+
+  private locsScreen(): void {
+    const cards = LOCATIONS.map(l => {
+      const own = save.locUnlocked.includes(l.id);
+      const sel = save.loc === l.id;
+      const action = own ? (sel ? 'ВЫБРАНА' : 'ВЫБРАТЬ') : (save.coins >= l.cost ? `КУПИТЬ ${l.cost}🪙` : `🔒 ${l.cost}🪙`);
+      return `<div class="card ${sel ? 'sel' : ''}">
+        <div class="em">${l.emoji}</div>
+        <div class="ct"><b>${l.name}</b><p>${l.desc}</p></div>
+        <button class="btn sm ${own || save.coins >= l.cost ? '' : 'dis'}" data-act="loc" data-arg="${l.id}">${action}</button>
+      </div>`;
+    }).join('');
+    this.screens.innerHTML = `<div class="screen list"><h2>ЛОКАЦИИ</h2><div class="stats"><b>🪙 ${save.coins}</b></div><div class="scroll">${cards}</div>
+      <button class="btn" data-act="menu">← НАЗАД</button></div>`;
   }
 
   private chars(): void {
@@ -159,7 +193,7 @@ export class UI implements GameEvents {
 
   private scoresScreen(): void {
     const rows = save.scores.length
-      ? save.scores.map((s, i) => `<div class="srow"><b>${i + 1}</b><span>${this.esc(s.name)}</span><em>${s.score}</em><small>волна ${s.wave} · ${s.kills}🐻</small></div>`).join('')
+      ? save.scores.map((s, i) => `<div class="srow"><b>${i + 1}</b><span>${this.esc(s.name)}</span><em>${s.score}</em><small>${s.loc ? s.loc + ' · ' : ''}волна ${s.wave} · ${s.kills}🐻</small></div>`).join('')
       : '<p class="empty">Пока пусто. Медведи ждут вас.</p>';
     this.screens.innerHTML = `<div class="screen list"><h2>ТАБЛИЦА РЕКОРДОВ</h2><div class="scroll">${rows}</div>
       <p class="hint">Всего убито медведей: ${save.kills} · забегов: ${save.runs}</p><button class="btn" data-act="menu">← НАЗАД</button></div>`;
@@ -176,13 +210,14 @@ export class UI implements GameEvents {
   // ------------------------------------------------------------ события игры
   levelUp(cards: UpgradeDef[]): void {
     this.screens.innerHTML = `<div class="screen center"><h2>НОВЫЙ УРОВЕНЬ!</h2><p class="hint">Выбери усиление</p>
-      ${cards.map(u => `<button class="btn card2" data-act="upgrade" data-arg="${u.id}"><span class="ic">${u.icon}</span><span><b>${u.name}</b><small>${u.desc}</small></span></button>`).join('')}</div>`;
+      ${cards.map(u => `<button class="btn card2" data-act="upgrade" data-arg="${u.id}"><span class="ic">${u.icon}</span><span><b>${u.name}</b><small>${u.desc}</small></span></button>`).join('')}
+      <button class="btn sm" data-act="skipUp">ПОТОМ</button></div>`;
     this.input.release();
   }
 
   gameOver(r: RunResult): void {
     this.lastResult = r;
-    this.lastRowId = r.score > 0 ? addScore(save.nick, r.score, r.wave, r.kills) : 0;
+    this.lastRowId = r.score > 0 ? addScore(save.nick, r.score, r.wave, r.kills, r.loc) : 0;
     this.hudEl.classList.add('hidden');
     this.screens.innerHTML = `<div class="screen center over">
       <h2>ВЫ ПОГИБЛИ</h2><p class="title">${r.title}</p>
@@ -196,7 +231,7 @@ export class UI implements GameEvents {
 
   private async share(): Promise<void> {
     const r = this.lastResult; if (!r) return;
-    const text = `Я продержался ${r.wave} волн в «Столовой №7»! «${r.title}». Счёт: ${r.score} 🐻 #столовая7`;
+    const text = `Я продержался ${r.wave} волн в игре «Столовая №7» (${r.loc})! «${r.title}». Счёт: ${r.score} 🐻 #столовая7`;
     const blob = await this.game.makeCard([r.title, `Волна ${r.wave} · ${r.kills} медведей`, `Счёт: ${r.score}`, r.rank]);
     try {
       const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
@@ -220,6 +255,10 @@ export class UI implements GameEvents {
   private e(id: string): HTMLElement { return this.els[id] ??= $(this.root, '#' + id); }
 
   hud(s: HudState): void {
+    this.points = s.points;
+    this.setCached('up', String(s.points), this.e('upCount'), 'text');
+    const ub = this.e('upBtn');
+    if (this.cache.upHas !== String(s.points > 0)) { this.cache.upHas = String(s.points > 0); ub.classList.toggle('has', s.points > 0); }
     this.setCached('hpw', (s.hp / s.maxHp * 100).toFixed(0) + '%', this.e('hpFill'), 'width');
     this.setCached('hpt', `❤️ ${Math.ceil(s.hp)}/${s.maxHp}`, this.e('hpText'), 'text');
     this.setCached('xpw', (s.xp / s.xpNext * 100).toFixed(0) + '%', this.e('xpFill'), 'width');

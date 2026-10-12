@@ -1,6 +1,6 @@
 // Весь звук синтезируется на лету (WebAudio) — никаких файлов, быстрый запуск.
 
-type Sfx = 'shoot' | 'shoot2' | 'boomShot' | 'hit' | 'die' | 'hurt' | 'coin' | 'pickup' | 'levelup' | 'boom' | 'roar' | 'click' | 'wave' | 'fish';
+type Sfx = 'shoot' | 'shoot2' | 'boomShot' | 'hit' | 'die' | 'hurt' | 'coin' | 'pickup' | 'levelup' | 'boom' | 'roar' | 'click' | 'wave' | 'fish' | 'bark';
 
 // Народная «Коробейники» (общественное достояние), A-minor, MIDI + длительность в долях
 const MELODY: [number, number][] = [
@@ -70,7 +70,7 @@ class AudioSys {
   play(name: Sfx): void {
     if (!this.ctx || this.muted) return;
     const now = performance.now();
-    const gap: Partial<Record<Sfx, number>> = { shoot: 55, shoot2: 80, hit: 45, coin: 40, die: 60 };
+    const gap: Partial<Record<Sfx, number>> = { shoot: 55, shoot2: 80, hit: 45, coin: 40, die: 60, bark: 140 };
     const g = gap[name];
     if (g && now - (this.last[name] || 0) < g) return;
     this.last[name] = now;
@@ -89,6 +89,7 @@ class AudioSys {
       case 'roar': this.tone(110, 0.7, 'sawtooth', 0.14, -40); this.tone(95, 0.7, 'square', 0.08, -30); this.noise(0.5, 0.12, 500); break;
       case 'click': this.tone(660, 0.05, 'square', 0.05); break;
       case 'wave': this.tone(330, 0.12, 'square', 0.07); this.tone(440, 0.12, 'square', 0.07, 0, 0.12); this.tone(660, 0.2, 'square', 0.07, 0, 0.24); break;
+      case 'bark': this.tone(420 * r, 0.09, 'square', 0.07, -200); this.noise(0.05, 0.08, 1600); this.tone(330 * r, 0.09, 'square', 0.06, -150, 0.12); break;
       case 'fish': this.tone(700, 0.1, 'triangle', 0.05, -400); break;
     }
   }
