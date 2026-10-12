@@ -18,9 +18,10 @@ export interface RunResult {
   score: number; wave: number; kills: number; coins: number; lvl: number; title: string; rank: string; joke: string; loc: string; newBest: boolean; time: number;
 }
 export interface GameEvents {
+  finish(on: boolean): void;
   hud(s: HudState): void;
   quip(text: string, who: 'p' | 'b' | 'sys'): void;
-  banner(title: string, sub: string, kind: 'wave' | 'boss' | 'event' | 'combo' | 'info'): void;
+  banner(title: string, sub: string, kind: 'wave' | 'boss' | 'event' | 'combo' | 'info' | 'fatal'): void;
   float(sx: number, sy: number, text: string, cls: string): void;
   levelUp(cards: UpgradeDef[]): void;
   gameOver(r: RunResult): void;
@@ -34,7 +35,7 @@ interface Enemy {
   def: EnemyDef; rig: Rig; x: number; z: number; vx: number; vz: number; hp: number; maxHp: number; r: number;
   spd: number; dmg: number; flash: number; atkCd: number; t: number; face: number; stun: number; slow: number;
   shootCd: number; side: number; dead: boolean; deadT: number; fvx: number; fvz: number; fy: number; fvy: number;
-  sawCd: number; lunge: number; lungeCd: number; enraged: boolean; rear: number; rearT: number; rearCd: number;
+  fin: number; finT: number; sawCd: number; lunge: number; lungeCd: number; enraged: boolean; rear: number; rearT: number; rearCd: number;
   bState: 'chase' | 'wind' | 'charge' | 'rest'; bT: number; bCd: number; cx: number; cz: number; sum1: boolean; sum2: boolean; ring: number;
 }
 interface Proj { x: number; z: number; vx: number; vz: number; life: number; dmg: number; pierce: number; w: WeaponDef; hit: Enemy[]; crit: boolean; ang: number }
@@ -122,6 +123,9 @@ export class Game {
   private runTime = 0;
   private bossRef: Enemy | null = null;
   private killer: Killer = 'cub';
+  private finTarget: Enemy | null = null;
+  private fin: { e: Enemy; t: number; type: number; started: boolean; done: boolean } | null = null;
+  private finKill = false;
   private deathT = 0;
   private result: RunResult | null = null;
 
@@ -302,7 +306,8 @@ export class Game {
     for (const q of this.parts) q.life = 0;
     this.puddles.forEach(p => { p.t = 0; p.mesh.visible = false; });
     this.bombActive = false; this.bombMesh.visible = false; this.warnLine.visible = false; this.ringMesh.visible = false;
-    this.bossRef = null;
+    this.bossRef = null; this.finTarget = null; this.fin = null;
+    this.events?.finish(false);
     this.projMesh.count = this.eshotMesh.count = this.pickMesh.count = this.partMesh.count = 0;
     this.menuProps.forEach(r => (r.root.visible = false));
   }
@@ -378,6 +383,7 @@ export class Game {
     this.time += dt;
     if (this.mode === 'play') {
       this.runTime += dt;
+      this.updateFin(real);
       this.updatePlayer(dt);
       this.updateSpawning(dt);
     } else {
@@ -459,6 +465,7 @@ export class Game {
     this.rig.root.rotation.y = p.face;
     this.rig.root.visible = p.invuln <= 0 || Math.floor(this.time * 20) % 2 === 0;
     animateRig(this.rig, p.animT, mag, true, !!target);
+    if (this.fin) this.rig.armR.rotation.x = this.fin.t < 0.55 ? -2.9 : -0.3;
     // фонарь при отключении света
     this.lamp.position.set(p.x, 3, p.z);
   }
@@ -501,6 +508,7 @@ export class Game {
     this.mode = 'dying'; this.killer = kind; this.deathT = 1.7;
     this.slowT = 2; this.slowScale = 0.3; this.zoomKick = 1; this.shake = 1;
     this.input.setEnabled(false);
+    this.finTarget = null; this.fin = null; this.events.finish(false);
     this.rig.root.visible = true; setFlash(this.rig, null);
     this.events.bossBar(null, '');
     audio.play('die');
@@ -660,7 +668,7 @@ export class Game {
     const e: Enemy = {
       def, rig, x: sx, z: sz, vx: 0, vz: 0, hp, maxHp: hp, r: def.radius * (big ? 1.25 : 1), spd, dmg: def.dmg * (1 + (w - 1) * 0.04),
       flash: 0, atkCd: 0.6, t: Math.random() * 6, face: 0, stun: 0, slow: 0, shootCd: 1 + Math.random() * 1.5, side: Math.random() < 0.5 ? -1 : 1,
-      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, sawCd: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, rear: 0, rearT: 0, rearCd: 2 + Math.random() * 4, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
+      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, fin: 0, finT: 0, sawCd: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, rear: 0, rearT: 0, rearCd: 2 + Math.random() * 4, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
     };
     this.enemies.push(e);
     this.burst(sx, 0.6, sz, 8, [0xd8d0c0, 0xaaa090], 3, 2, 0.2, 0.5, 8);
@@ -691,7 +699,12 @@ export class Game {
         continue;
       }
       alive.push(e);
-      e.t += dt; e.atkCd -= dt; e.sawCd -= dt; e.stun -= dt; e.slow = Math.max(0, e.slow - dt);
+      e.t += dt; e.atkCd -= dt; e.sawCd -= dt;
+      if (e.fin === 1) {
+        e.finT -= dt; e.stun = Math.max(e.stun, 0.3); e.atkCd = Math.max(e.atkCd, 0.5);
+        if (e.flash <= 0) setFlash(e.rig, Math.floor(e.t * 8) % 2 ? warnMat : null);
+        if (e.finT <= 0 && !this.fin) { e.fin = 2; setFlash(e.rig, null); if (this.finTarget === e) { this.finTarget = null; this.events.finish(false); } }
+      } e.stun -= dt; e.slow = Math.max(0, e.slow - dt);
       if (e.flash > 0) { e.flash -= dt; if (e.flash <= 0) setFlash(e.rig, null); }
       const dx = p.x - e.x, dz = p.z - e.z, dist = Math.hypot(dx, dz) || 1e-4;
       const nx = dx / dist, nz = dz / dist;
@@ -815,6 +828,80 @@ export class Game {
     else if (this.bossRef) this.events.bossBar(Math.max(0, this.bossRef.hp / this.bossRef.maxHp), this.bossRef.def.name);
   }
 
+  private startFinish(e: Enemy): void {
+    e.fin = 1; e.finT = 4; e.stun = 4;
+    this.finTarget = e;
+    this.events.finish(true);
+    this.events.banner('ДОБЕЙ ЕГО!', 'Жми 💀 внизу', 'fatal');
+    audio.play('gong'); audio.voice('Добей его');
+  }
+
+  /** Кнопка 💀: игрок подскакивает к медведю и делает случайное добивание. */
+  doFinisher(): void {
+    const e = this.finTarget, p = this.p;
+    if (!e || e.dead || this.fin || this.mode !== 'play') return;
+    const dx = p.x - e.x, dz = p.z - e.z, l = Math.hypot(dx, dz) || 1;
+    resolveCircle(e.x + (dx / l) * (e.r + 1.0), e.z + (dz / l) * (e.r + 1.0), p.r, this.level.obstacles, tmp);
+    p.x = tmp.x; p.z = tmp.z; p.face = Math.atan2(e.x - p.x, e.z - p.z); p.invuln = 3; p.kx = p.kz = 0;
+    this.fin = { e, t: 0, type: Math.floor(Math.random() * 5), started: false, done: false };
+    this.events.finish(false);
+  }
+
+  private updateFin(real: number): void {
+    const f = this.fin;
+    if (!f) return;
+    f.t += real;
+    if (!f.started) { f.started = true; this.slowT = 2; this.slowScale = 0.22; this.zoomKick = 1; this.hitStop = 0.12; audio.play('gong'); }
+    if (!f.done && f.t >= 0.6) { f.done = true; this.strikeFinisher(f.e, f.type); }
+    if (f.t >= 1.7) this.fin = null;
+  }
+
+  private strikeFinisher(e: Enemy, type: number): void {
+    const p = this.p;
+    this.finTarget = null;
+    if (e.dead) return;
+    e.fin = 2; setFlash(e.rig, null);
+    const T = [
+      { t: 'ФАТАЛИТИ', s: 'Борщ в лицо!' }, { t: 'БРУТАЛИТИ', s: 'Поварёшка-апперкот!' }, { t: 'ФАТАЛИТИ', s: 'Пельмени из медведя!' },
+      { t: 'АНИМАЛИТИ', s: 'Медведь стал котлетой!' }, { t: 'ФАТАЛИТИ', s: 'Компот-шторм!' },
+    ][type];
+    const dx = e.x - p.x, dz = e.z - p.z, l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l;
+    p.score += 500; p.runCoins += 8; p.hp = Math.min(this.stats.maxHp, p.hp + this.stats.maxHp * 0.12);
+    this.hitStop = 0.22; this.shake = 1;
+    this.events.banner(T.t, T.s, 'fatal');
+    audio.play('boom'); audio.voice(T.t);
+    this.finKill = true;
+    const y = 1.0 * e.def.size;
+    switch (type) {
+      case 0: // борщ
+        this.explode(e.x, e.z, 2.6, 90 * this.stats.dmgMul, 0xd02030, 1.2, true);
+        this.burst(e.x, y, e.z, 60, [0xd02030, 0xff5a3a, 0xffe0a0], 11, 8, 0.22, 1.0);
+        break;
+      case 1: // апперкот
+        this.hurtEnemy(e, 99999, ux, uz, 0, true, true);
+        e.fvy = 26; e.fvx *= 0.3; e.fvz *= 0.3; e.deadT = 1.15;
+        this.burst(e.x, 1, e.z, 20, [0xffffff, 0xffe58a], 8, 6, 0.2, 0.6);
+        break;
+      case 2: // пельмени
+        this.hurtEnemy(e, 99999, ux, uz, 0, true, true);
+        e.deadT = 0.02;
+        this.burst(e.x, y, e.z, 90, [0xf4e8d0, 0xe0c898, 0xffffff, 0xcaa070], 12, 9, 0.2, 1.1);
+        this.float(e.x, 2.8 * e.def.size, e.z, 'ПЕЛЬМЕНИ!', 'crit');
+        break;
+      case 3: // котлета
+        this.hurtEnemy(e, 99999, ux, uz, 0, true, true);
+        this.burst(e.x, y, e.z, 40, [0x9a5a30, 0x7a3a1a, 0xc08050], 9, 7, 0.22, 0.9);
+        for (let i = 0; i < 2; i++) this.addPickup('pie', e.x + (Math.random() - 0.5) * 1.5, e.z + (Math.random() - 0.5) * 1.5, 1);
+        this.float(e.x, 2.8 * e.def.size, e.z, 'КОТЛЕТЫ!', 'heal');
+        break;
+      default: // компот
+        this.hurtEnemy(e, 99999, ux, uz, 0, true, true);
+        this.burst(e.x, y, e.z, 80, [0x6fb7d6, 0x3b7ab0, 0xffffff, 0x9ad8f0], 12, 10, 0.2, 1.2);
+        this.float(e.x, 2.8 * e.def.size, e.z, 'КОМПОТ!', 'crit');
+    }
+    this.finKill = false;
+  }
+
   private summon(boss: Enemy, n: number): void {
     this.say('СЮДА, РЕБЯТА! ОНИ ТУТ ЕДЯТ!', 'b', true);
     this.shake = 0.8; audio.play('roar');
@@ -834,6 +921,11 @@ export class Game {
     if (e.dead) return;
     const d = dmg * (ignoreArmor ? 1 : 1 - e.def.armor);
     e.hp -= d;
+    // MORTAL KOMBAT: крупный медведь на последнем издыхании ждёт добивания
+    if (e.fin === 1) { if (e.hp < 1) e.hp = 1; }
+    else if (e.fin === 0 && this.mode === 'play' && !this.finTarget && !this.fin && e.def.id !== 'dog' && e.def.id !== 'cub' && e.hp < e.maxHp * 0.15) {
+      if (e.def.boss || Math.random() < 0.55) { e.hp = Math.max(e.hp, 1); this.startFinish(e); } else e.fin = 2;
+    }
     e.flash = 0.09; setFlash(e.rig, flashMat);
     const k = (e.def.boss ? 0.12 : 1) * knock / (e.def.size * 0.9 + 0.1);
     e.vx += dx * k; e.vz += dz * k;
@@ -845,6 +937,7 @@ export class Game {
 
   private killEnemy(e: Enemy, dx: number, dz: number, crit: boolean): void {
     e.dead = true; e.deadT = e.def.boss ? 0.9 : 0.5;
+    if (this.finTarget === e) { this.finTarget = null; this.events.finish(false); }
     const p = this.p;
     setFlash(e.rig, null);
     // летит «в космос»
@@ -860,7 +953,7 @@ export class Game {
     if (streak) { this.events.banner(streak, 'КОМБО x' + p.combo, 'combo'); audio.play('levelup'); }
     if (e.def.boss) {
       this.hitStop = 0.28; this.slowT = 1.6; this.slowScale = 0.28; this.zoomKick = 1; this.shake = 1;
-      this.events.banner('ФАТАЛИТИ', e.def.name + ' улетел в тайгу', 'boss');
+      if (!this.finKill) this.events.banner('ФАТАЛИТИ', e.def.name + ' улетел в тайгу', 'boss');
       this.say('Это тебе за компот!', 'p', true);
       audio.play('boom');
       for (let k = 0; k < 6; k++) this.addPickup('coin', e.x + (Math.random() - 0.5) * 3, e.z + (Math.random() - 0.5) * 3, 5);

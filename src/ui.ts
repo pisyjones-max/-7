@@ -43,6 +43,7 @@ export class UI implements GameEvents {
         <div id="combo" class="combo hidden"></div>
         <div id="weapon" class="weapon hidden"><span id="wIcon"></span><div class="bar"><i id="wFill"></i></div></div>
         <div id="floats"></div>
+        <button id="finBtn" class="hidden">💀 ДОБЕЙ ЕГО!</button>
         <button id="upBtn"><span>⭐</span><b id="upCount">0</b><small>ПРОКАЧКА</small></button>
         <button id="bombBtn"><span>🍲</span><small>БОРЩ</small><div id="bombCd"></div></button>
         <div id="hurtFlash"></div>
@@ -61,6 +62,7 @@ export class UI implements GameEvents {
     game.events = this;
     const bomb = $(this.root, '#bombBtn');
     bomb.addEventListener('pointerdown', e => { e.preventDefault(); input.bombPressed = true; });
+    $(this.root, '#finBtn').addEventListener('pointerdown', e => { e.preventDefault(); game.doFinisher(); });
     $(this.root, '#upBtn').addEventListener('pointerdown', e => {
       e.preventDefault();
       if (this.points > 0) game.openUpgrades();
@@ -309,6 +311,10 @@ export class UI implements GameEvents {
     this.floats.appendChild(d);
   }
 
+  finish(on: boolean): void {
+    this.e('finBtn').classList.toggle('hidden', !on);
+  }
+
   bossBar(frac: number | null, name: string): void {
     const b = this.e('bossBar');
     if (frac === null) { b.classList.add('hidden'); return; }
@@ -325,6 +331,6 @@ export class UI implements GameEvents {
   private clearHud(): void {
     this.cache = {};
     this.floats.innerHTML = '';
-    ['quip', 'banner', 'bossBar'].forEach(id => this.e(id).classList.add('hidden'));
+    ['quip', 'banner', 'bossBar', 'finBtn'].forEach(id => this.e(id).classList.add('hidden'));
   }
 }

@@ -111,3 +111,10 @@ h2 { margin: 0; font-size: 28px; color: var(--y); text-shadow: 3px 3px 0 #000; }
 #upBtn small { font-size: 8px; text-shadow: 1px 1px 0 #000; }
 #upBtn.has { background: linear-gradient(#ffd24a,#d9941a); opacity: 1; animation: pulse .7s infinite; } #upBtn.has b { background: var(--r); }
 .screen.menu { overflow-y: auto; }
+
+.banner.fatal h1 { font-size: 46px; color: #e01010; letter-spacing: 3px; text-shadow: 0 5px 0 #500, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000; }
+.banner.fatal p { color: #ffd24a; font-size: 16px; }
+.banner.fatal.show { animation-duration: 2.2s; }
+#finBtn { position: absolute; left: 0; right: 0; margin: auto; width: 230px; bottom: 140px; padding: 14px 8px; font: 900 22px Impact, 'Arial Black', sans-serif;
+  color: #ffd24a; background: linear-gradient(#e01010,#7a0606); border: 5px solid #000; box-shadow: 0 6px 0 #000; text-shadow: 2px 2px 0 #000;
+  pointer-events: auto; letter-spacing: 1px; animation: pulse .5s infinite; touch-action: none; }
