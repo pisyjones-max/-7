@@ -123,3 +123,5 @@ h2 { margin: 0; font-size: 28px; color: var(--y); text-shadow: 3px 3px 0 #000; }
 #itemBar .it { position: relative; pointer-events: auto; width: 56px; height: 56px; border: 4px solid #000; background: rgba(40,30,60,.85); color: #fff; font-family: inherit; touch-action: none; }
 #itemBar .it span { font-size: 26px; } #itemBar .it b { position: absolute; right: 2px; bottom: 0; font-size: 14px; text-shadow: 2px 2px 0 #000; color: var(--y); }
 #itemBar .it.empty { opacity: .35; } #itemBar.cd .it { filter: grayscale(.8); }
+
+#waveText { white-space: pre; }

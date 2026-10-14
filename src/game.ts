@@ -12,10 +12,10 @@ import { save, commit } from './save';
 
 export interface HudState {
   hp: number; maxHp: number; xp: number; xpNext: number; lvl: number; wave: number; score: number; coins: number;
-  continues: number; items: Record<ItemKind, number>; itemCd: number; points: number; bombFrac: number; weaponIcon: string; weaponName: string; weaponFrac: number; combo: number; mult: number; left: number;
+  locName: string; locNo: number; locTotal: number; wavesPer: number; continues: number; items: Record<ItemKind, number>; itemCd: number; points: number; bombFrac: number; weaponIcon: string; weaponName: string; weaponFrac: number; combo: number; mult: number; left: number;
 }
 export interface RunResult {
-  score: number; wave: number; kills: number; coins: number; lvl: number; title: string; rank: string; joke: string; loc: string; newBest: boolean; time: number;
+  score: number; wave: number; kills: number; coins: number; lvl: number; title: string; rank: string; joke: string; loc: string; victory: boolean; newBest: boolean; time: number;
 }
 export interface GameEvents {
   continuePrompt(left: number, wave: number): void;
@@ -74,6 +74,7 @@ interface Pickup { kind: 'coin' | 'xp' | 'pie' | 'crate' | 'ammo'; x: number; z:
 interface Particle { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; size: number; spin: number; color: THREE.Color; grav: number }
 interface Puddle { x: number; z: number; r: number; t: number; tick: number; mesh: THREE.Mesh; dmg: number }
 
+const WAVES_PER_LOC = 5;
 const MAX_PROJ = 160, MAX_ESHOT = 40, MAX_PICK = 150, MAX_PART = 700, MAX_SHADOW = 80;
 const BOMB_CD = 11;
 const tmp = { x: 0, z: 0 };
@@ -143,7 +144,7 @@ export class Game {
 
   // волны
   private wave = 0;
-  private waveState: 'break' | 'fight' = 'break';
+  private waveState: 'break' | 'fight' | 'exit' = 'break';
   private breakT = 2;
   private queue: EnemyKind[] = [];
   private spawnT = 0;
@@ -170,6 +171,10 @@ export class Game {
   private netMeshes: { mesh: THREE.Mesh; e: Enemy | null }[] = [];
   private continuesLeft = 0;
   private finished = false;
+  private locIndex = 0;
+  private exitMarker: THREE.Group = new THREE.Group();
+  private victory = false;
+  private exitOpen = false;
   private lockT = 0;
   private deathT = 0;
   private result: RunResult | null = null;
@@ -221,6 +226,16 @@ export class Game {
     this.ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffc040, transparent: true, opacity: 0.8, depthWrite: false }));
     this.ringMesh.visible = false;
     this.scene.add(this.ringMesh);
+    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 3.2, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+    beacon.position.y = 1.6;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.5, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
+    ring.position.y = 0.07;
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.0, 4), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
+    arrow.rotation.x = Math.PI; arrow.position.y = 3.6; arrow.name = 'arrow';
+    this.exitMarker.add(beacon, ring, arrow);
+    this.exitMarker.position.set(0, 0, ARENA.hz - 1.6);
+    this.exitMarker.visible = false;
+    this.scene.add(this.exitMarker);
     const gGeo = new THREE.BoxGeometry(0.4, 0.45, 0.4);
     for (let i = 0; i < 8; i++) { const m = new THREE.Mesh(gGeo, this.gMats.frag); m.visible = false; this.scene.add(m); this.gPool.push(m); }
     const netGeo = new THREE.BoxGeometry(1, 1, 1, 3, 3, 3);
@@ -309,6 +324,9 @@ export class Game {
 
   showMenu(): void {
     this.clearWorld();
+    const sel = LOCATIONS.find(l => l.id === save.loc) ?? LOCATIONS[0];
+    this.locDef = sel; this.locIndex = LOCATIONS.indexOf(sel); this.victory = false; this.exitMarker.visible = false;
+    this.applyLocLight();
     this.rebuildLevel();
     this.mode = 'menu';
     this.applyCam();
@@ -374,6 +392,9 @@ export class Game {
 
   start(): void {
     this.clearWorld();
+    const si = Math.max(0, LOCATIONS.findIndex(l => l.id === save.loc));
+    this.locIndex = si; this.locDef = LOCATIONS[si]; this.victory = false; this.exitOpen = false; this.exitMarker.visible = false;
+    this.applyLocLight();
     this.rebuildLevel();
     this.spawnNpcs();
     this.items = { frag: 2, smoke: 1, decoy: 1, net: 1 }; this.itemCd = 0;
@@ -452,7 +473,7 @@ export class Game {
       this.updateSpawning(dt);
     } else {
       this.deathT -= real;
-      this.p.deathTilt = Math.min(1.5, this.p.deathTilt + real * 2.2);
+      if (!this.victory) this.p.deathTilt = Math.min(1.5, this.p.deathTilt + real * 2.2);
       this.rig.root.rotation.x = -this.p.deathTilt;
       this.rig.root.position.y = Math.min(0.4, this.p.deathTilt * 0.25);
       if (this.deathT <= 0) this.afterDeath();
@@ -529,6 +550,8 @@ export class Game {
       if (p.weaponT <= 0) { p.weapon = 'spoon'; this.say('Опять поварёшка... Классика!', 'p', true); }
     }
     if (s.regen > 0 && p.hp < s.maxHp) p.hp = Math.min(s.maxHp, p.hp + s.regen * dt);
+    const psh = this.playerShelter();
+    if (psh && !psh.open && !psh.broken && p.hp < s.maxHp) p.hp = Math.min(s.maxHp, p.hp + 4 * dt);
     p.invuln -= dt;
     p.comboT -= dt; if (p.comboT <= 0) p.combo = 0;
     p.bombCd -= dt;
@@ -603,13 +626,13 @@ export class Game {
     const prevBest = save.best;
     save.coins += coins; save.kills += p.kills; save.runs += 1;
     if (p.score > save.best) save.best = p.score;
-    const wave = Math.max(1, this.wave);
+    const wave = this.stage();
     save.bestWave = Math.max(save.bestWave, wave);
     commit();
     let rank = RANKS[0][1];
     for (const [w, name] of RANKS) if (wave >= w) rank = name;
     this.result = {
-      score: p.score, wave, kills: p.kills, coins, lvl: p.lvl, title: this.killer === 'saw' ? 'Распилен на доски. Сам виноват.' : pick(ENEMIES[this.killer].killedBy), loc: this.locDef.name, rank, joke: pick(DEATH_JOKES),
+      score: p.score, wave, kills: p.kills, coins, lvl: p.lvl, title: this.victory ? 'ВСЕ ЛОКАЦИИ ЗАЧИЩЕНЫ' : this.killer === 'saw' ? 'Распилен на доски. Сам виноват.' : pick(ENEMIES[this.killer].killedBy), loc: this.locDef.name, victory: this.victory, rank, joke: pick(DEATH_JOKES),
       newBest: p.score > prevBest, time: this.runTime,
     };
     audio.setIntense(false);
@@ -618,11 +641,12 @@ export class Game {
 
   // ---------------------------------------------------------------- волны
   private buildQueue(wave: number): EnemyKind[] {
-    const boss = wave % 5 === 0;
-    const n = Math.min(40, 5 + Math.floor(wave * 2));
-    const wBear = wave >= 2 ? Math.min(0.45, 0.12 + wave * 0.04) : 0;
-    const wFish = wave >= 3 ? Math.min(0.22, 0.05 + wave * 0.02) : 0;
-    const wTank = wave >= 4 ? Math.min(0.2, 0.03 + wave * 0.02) : 0;
+    const boss = wave === WAVES_PER_LOC;
+    const st = this.locIndex * WAVES_PER_LOC + wave;
+    const n = Math.min(24, 4 + wave * 2 + this.locIndex * 2);
+    const wBear = st >= 2 ? Math.min(0.45, 0.1 + st * 0.03) : 0;
+    const wFish = st >= 3 ? Math.min(0.22, 0.04 + st * 0.015) : 0;
+    const wTank = st >= 5 ? Math.min(0.2, 0.02 + st * 0.012) : 0;
     const q: EnemyKind[] = [];
     for (let i = 0; i < n; i++) {
       const r = Math.random();
@@ -632,8 +656,8 @@ export class Game {
     }
     if (this.locDef.dogs) for (let i = 0; i < q.length; i++) if (q[i] === 'cub' && Math.random() < 0.7) q[i] = 'dog'; else if (q[i] === 'bear' && Math.random() < 0.15) q[i] = 'dog';
     if (boss) {
-      q.length = Math.min(q.length, 4 + wave);
-      q.splice(3, 0, Math.floor(wave / 5) % 2 === 1 ? 'potap' : 'mutant');
+      q.length = Math.min(q.length, 3 + wave);
+      q.splice(3, 0, this.bossKind());
     }
     return q;
   }
@@ -644,18 +668,18 @@ export class Game {
     this.waveState = 'fight';
     for (const n of this.npcs) if (n.state === 'dead') this.reviveNpc(n);
     this.queue = this.buildQueue(w);
-    this.spawnGap = Math.max(0.5, 1.3 - w * 0.05);
+    this.spawnGap = Math.max(0.55, 1.35 - this.stage() * 0.035);
     this.spawnT = 0.6;
     this.event = null;
     audio.play('wave');
-    const boss = w % 5 === 0;
-    audio.setIntense(boss || w >= 8);
+    const boss = w === WAVES_PER_LOC;
+    audio.setIntense(boss || this.stage() >= 8);
     if (boss) {
-      const kind = Math.floor(w / 5) % 2 === 1 ? 'potap' : 'mutant';
+      const kind = this.bossKind();
       this.events.banner('БОСС: ' + ENEMIES[kind].name.toUpperCase(), kind === 'potap' ? 'Михаил Потапыч пришёл за добавкой!' : 'Он пил воду из Чернобыля. И компот.', 'boss');
       audio.play('roar');
     } else {
-      this.events.banner('ВОЛНА ' + w, pick(WAVE_SUBS), 'wave');
+      this.events.banner('ВОЛНА ' + w + '/' + WAVES_PER_LOC, pick(WAVE_SUBS), 'wave');
       if (w >= 2 && Math.random() < 0.5) {
         const evs: (keyof typeof EVENTS)[] = ['blackout', 'pirozhki', 'rush'];
         if (this.npcs.some(n => n.state !== 'dead')) evs.push('ambush');
@@ -664,7 +688,7 @@ export class Game {
         this.event = ev;
         setTimeout(() => this.events.banner(EVENTS[ev].title, EVENTS[ev].sub, 'event'), 1400);
         if (ev === 'blackout') this.setBlackout(true);
-        if (ev === 'rush') for (let i = 0; i < 10; i++) this.queue.push('cub');
+        if (ev === 'rush') for (let i = 0; i < 6; i++) this.queue.push('cub');
         if (ev === 'ambush') this.ambush();
         if (ev === 'lock') this.lockShelters();
         if (ev === 'pirozhki') for (let i = 0; i < 7; i++) this.addPickup('pie', (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 24, 1);
@@ -674,18 +698,19 @@ export class Game {
 
   private endWave(): void {
     this.waveState = 'break';
-    this.breakT = this.wave % 5 === 0 ? 4 : 2.8;
+    this.breakT = 3.2;
     const p = this.p;
-    p.score += 100 * this.wave;
-    p.runCoins += 3 + this.wave;
-    p.hp = Math.min(this.stats.maxHp, p.hp + this.stats.maxHp * 0.15);
+    p.score += 100 * this.stage();
+    p.runCoins += 3 + this.stage();
+    p.hp = Math.min(this.stats.maxHp, p.hp + this.stats.maxHp * 0.25);
     const aliveNpc = this.npcs.filter(n => n.state !== 'dead').length;
     if (aliveNpc > 0) { p.runCoins += aliveNpc * 2; p.score += aliveNpc * 25; this.say('Люди благодарят: +' + aliveNpc * 2 + ' монет', 'sys'); }
     this.unlockShelters();
     this.giveItem(pick(ITEM_KINDS));
     this.setBlackout(false);
-    this.events.banner('ВОЛНА ' + this.wave + ' ЗАЧИЩЕНА', '+' + 100 * this.wave + ' очков', 'info');
+    this.events.banner('ВОЛНА ' + this.wave + ' ЗАЧИЩЕНА', '+' + 100 * this.stage() + ' очков', 'info');
     audio.setIntense(false);
+    if (this.wave >= WAVES_PER_LOC) this.finishLocation();
   }
 
   private applyLocLight(): void {
@@ -699,7 +724,7 @@ export class Game {
     const def = LOCATIONS.find(l => l.id === id) ?? LOCATIONS[0];
     if (def.id === this.locDef.id) return;
     this.level.dispose();
-    this.locDef = def;
+    this.locDef = def; this.locIndex = LOCATIONS.indexOf(def);
     this.level = buildLocation(def.id, this.scene);
     save.loc = def.id; commit();
     this.applyLocLight();
@@ -714,6 +739,9 @@ export class Game {
     this.renderer.setClearColor(on ? 0x05030a : d.bg);
   }
 
+  private stage(): number { return this.locIndex * WAVES_PER_LOC + Math.max(1, this.wave); }
+  private bossKind(): EnemyKind { return this.locIndex % 2 === 0 ? 'potap' : 'mutant'; }
+
   private aliveCount(): number {
     let n = 0;
     for (const e of this.enemies) if (!e.dead) n++;
@@ -721,13 +749,14 @@ export class Game {
   }
 
   private updateSpawning(dt: number): void {
+    if (this.waveState === 'exit') { this.updateExit(dt); return; }
     if (this.waveState === 'break') {
       this.breakT -= dt;
       if (this.breakT <= 0) this.startWave();
       return;
     }
     this.spawnT -= dt;
-    const cap = this.wave % 5 === 0 ? 12 : 14;
+    const cap = this.wave === WAVES_PER_LOC ? 9 + Math.min(this.locIndex, 3) : 8 + Math.min(this.locIndex * 2, 6);
     const alive = this.aliveCount();
     if (this.queue.length && alive < cap && this.spawnT <= 0) {
       this.spawnEnemy(this.queue.shift()!);
@@ -739,9 +768,8 @@ export class Game {
   private spawnEnemy(kind: EnemyKind, at?: { x: number; z: number }): Enemy {
     const def = ENEMIES[kind];
     const rig = buildBear(def);
-    const w = this.wave, big = !!this.mods?.bigBears && !def.boss;
-    const bossIdx = Math.floor(w / 5);
-    const hp = def.hp * (def.boss ? 1 + Math.max(0, bossIdx - 1) * 0.6 : 1 + (w - 1) * 0.16) * (big ? 1.3 : 1);
+    const w = this.stage(), big = !!this.mods?.bigBears && !def.boss;
+    const hp = def.hp * (def.boss ? 1 + this.locIndex * 0.5 : 1 + (w - 1) * 0.1) * (big ? 1.3 : 1);
     const spd = Math.min(def.speed * (def.boss ? 1 : Math.min(1.35, 1 + (w - 1) * 0.02)) * (this.mods?.fastBears ? 1.25 : 1), def.id === 'dog' ? 5.6 : 4.7);
     let sx = at?.x ?? 0, sz = at?.z ?? 0;
     if (!at) {
@@ -1748,7 +1776,9 @@ export class Game {
         this.events.banner('ДВЕРЬ ОТКРЫТА!', 'Люди бегут в укрытие', 'event');
         audio.play('pickup');
       }
-      const want = this.npcs.some(n => (n.state === 'toShelter' && n.shelter === sh) || n.leaving === sh);
+      const dcz = (sh.door.minZ + sh.door.maxZ) / 2;
+      const playerNear = Math.hypot(this.p.x - sh.x, this.p.z - dcz) < 1.7 && this.mode === 'play';
+      const want = playerNear || this.npcs.some(n => (n.state === 'toShelter' && n.shelter === sh) || n.leaving === sh);
       sh.open = want && !sh.locked;
       sh.door.off = sh.open;
       sh.doorMesh.visible = !sh.open;
@@ -1768,7 +1798,7 @@ export class Game {
     for (let i = 0; i < 2; i++) {
       const a = Math.random() * Math.PI * 2;
       const x = Math.max(-5.5, Math.min(5.5, n.x + Math.cos(a) * 4)), z = Math.max(-14, Math.min(14, n.z + Math.sin(a) * 4));
-      this.spawnEnemy(this.wave >= 3 ? 'bear' : 'cub', { x, z });
+      this.spawnEnemy(this.stage() >= 3 ? 'bear' : 'cub', { x, z });
     }
     this.say('Медведь из коридора! Спасай людей!', 'sys', true);
   }
@@ -1805,6 +1835,8 @@ export class Game {
       const dP = Math.hypot(p.x - e.x, p.z - e.z);
       let best = dP * (dP < 5 ? 0.7 : 1);
       let kind: Enemy['tkind'] = 'player', tnpc: Npc | null = null, tx = p.x, tz = p.z;
+      const psh = this.playerShelter();
+      if (psh && !psh.broken && !psh.open) { best = Math.hypot(psh.outPt.x - e.x, psh.outPt.z - e.z); kind = 'door'; tx = psh.outPt.x; tz = psh.outPt.z; }
       if (this.inSmoke(e.x, e.z)) { // в дыму ничего не видит — бродит
         kind = 'wander'; e.wAng += (Math.random() - 0.5) * 2.6; tx = e.x + Math.cos(e.wAng) * 4; tz = e.z + Math.sin(e.wAng) * 4; best = -1;
       } else {
@@ -1980,9 +2012,79 @@ export class Game {
     }
   }
 
+  // ================================================================ Переход между локациями
+  /** Пятая волна пройдена: открывается выход в следующую локацию (или победа). */
+  private finishLocation(): void {
+    if (this.locIndex >= LOCATIONS.length - 1) {
+      this.victory = true;
+      this.mode = 'dying'; this.deathT = 2.4; this.input.setEnabled(false);
+      this.events.banner('ПОБЕДА!', 'Все локации зачищены. Медведи в шоке!', 'boss');
+      audio.play('levelup');
+      return;
+    }
+    this.waveState = 'exit';
+    this.exitOpen = true;
+    this.exitMarker.visible = true;
+    const nxt = LOCATIONS[this.locIndex + 1];
+    this.events.banner('ПРОХОД ОТКРЫТ', 'Иди к двери внизу: ' + nxt.emoji + ' ' + nxt.name, 'event');
+    this.say('Дверь внизу светится. Пора валить дальше!', 'sys', true);
+  }
+
+  private updateExit(dt: number): void {
+    const t = this.time;
+    this.exitMarker.scale.setScalar(1 + Math.sin(t * 5) * 0.06);
+    const ar = this.exitMarker.getObjectByName('arrow');
+    if (ar) ar.position.y = 3.4 + Math.sin(t * 6) * 0.25;
+    void dt;
+    if (Math.hypot(this.p.x - this.exitMarker.position.x, this.p.z - this.exitMarker.position.z) < 1.8) this.enterLocation(this.locIndex + 1);
+  }
+
+  /** Сносит всё живое и предметы мира, не трогая игрока и его прокачку. */
+  private clearEntities(): void {
+    for (const e of this.enemies) this.scene.remove(e.rig.root);
+    for (const n of this.npcs) this.scene.remove(n.rig.root);
+    this.enemies = []; this.npcs = []; this.projs = []; this.eshots = []; this.picks = []; this.grenades = []; this.smokes = [];
+    this.gPool.forEach(m => (m.visible = false));
+    this.netMeshes.forEach(s => { s.e = null; s.mesh.visible = false; });
+    this.puddles.forEach(q => { q.t = 0; q.mesh.visible = false; });
+    this.bombActive = false; this.bombMesh.visible = false; this.warnLine.visible = false; this.ringMesh.visible = false;
+    this.bossRef = null; this.finTarget = null; this.fin = null; this.events.finish(false); this.events.bossBar(null, '');
+    this.projMesh.count = this.eshotMesh.count = this.pickMesh.count = 0;
+    for (const q of this.parts) q.life = 0;
+  }
+
+  private enterLocation(idx: number): void {
+    const def = LOCATIONS[idx];
+    this.clearEntities();
+    this.level.dispose();
+    this.locIndex = idx; this.locDef = def;
+    this.level = buildLocation(def.id, this.scene);
+    this.applyLocLight();
+    this.spawnNpcs();
+    this.exitOpen = false; this.exitMarker.visible = false;
+    const p = this.p;
+    p.x = 0; p.z = ARENA.hz - 3.2; p.kx = p.kz = 0; p.invuln = 2.5; p.face = Math.PI;
+    p.hp = Math.min(this.stats.maxHp, p.hp + this.stats.maxHp * 0.4);
+    this.wave = 0; this.waveState = 'break'; this.breakT = 3.5; this.queue = []; this.event = null; this.lockT = 0;
+    this.zoomKick = 0.5;
+    audio.play('levelup');
+    if (!save.locUnlocked.includes(def.id)) {
+      save.locUnlocked.push(def.id); commit();
+      this.events.banner('НОВАЯ ЛОКАЦИЯ ОТКРЫТА!', def.emoji + ' ' + def.name, 'boss');
+    } else this.events.banner(def.emoji + ' ' + def.name.toUpperCase(), 'Локация ' + (idx + 1) + ' из ' + LOCATIONS.length, 'boss');
+  }
+
+  /** Укрытие, в котором сейчас стоит игрок (можно отсидеться, пока медведи ломают дверь). */
+  private playerShelter(): Shelter | null {
+    const p = this.p;
+    for (const sh of this.level.shelters) if (Math.abs(p.x - sh.x) < 1.35 && Math.abs(p.z - sh.z) < 1.05) return sh;
+    return null;
+  }
+
   // ================================================================ Продолжение после смерти
   private afterDeath(): void {
-    if (this.continuesLeft > 0) { this.mode = 'continue'; this.events.continuePrompt(this.continuesLeft, Math.max(1, this.wave)); }
+    if (this.victory) this.finish();
+    else if (this.continuesLeft > 0) { this.mode = 'continue'; this.events.continuePrompt(this.continuesLeft, this.stage()); }
     else this.finish();
   }
 
@@ -2108,7 +2210,7 @@ export class Game {
     const p = this.p, w = WEAPONS[p.weapon];
     const maxCd = BOMB_CD * this.stats.bombCd;
     this.events.hud({
-      continues: this.continuesLeft, items: this.items, itemCd: Math.max(0, this.itemCd), points: this.pendingLevels, hp: Math.max(0, p.hp), maxHp: this.stats.maxHp, xp: p.xp, xpNext: p.xpNext, lvl: p.lvl, wave: Math.max(1, this.wave), score: p.score,
+      locName: this.locDef.name, locNo: this.locIndex + 1, locTotal: LOCATIONS.length, wavesPer: WAVES_PER_LOC, continues: this.continuesLeft, items: this.items, itemCd: Math.max(0, this.itemCd), points: this.pendingLevels, hp: Math.max(0, p.hp), maxHp: this.stats.maxHp, xp: p.xp, xpNext: p.xpNext, lvl: p.lvl, wave: Math.max(1, this.wave), score: p.score,
       coins: p.runCoins, bombFrac: Math.max(0, Math.min(1, 1 - p.bombCd / maxCd)), weaponIcon: w.icon, weaponName: w.name,
       weaponFrac: p.weapon === 'spoon' || p.fixedWeapon ? 0 : Math.max(0, p.weaponT / 18), combo: p.combo,
       mult: Math.min(3, 1 + Math.floor(p.combo / 5) * 0.25), left: this.queue.length + this.aliveCount(),

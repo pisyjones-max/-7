@@ -26,13 +26,11 @@ export interface SaveData {
   loc: string;
   locUnlocked: string[];
   bestWave: number;
+  locFix?: boolean;
 }
 
 const KEY = 'medvedokalipsis_save_v1';
 
-/** Пока идёт тестирование — все локации открыты. Поставь false, чтобы вернуть покупку за монеты. */
-export const TEST_UNLOCK_ALL_LOCATIONS = true;
-const ALL_LOCS = ['canteen', 'barrack', 'village', 'sawmill', 'banya', 'podezd'];
 
 const DEFAULT: SaveData = {
   coins: 0, best: 0, unlocked: ['vasya'], selected: 'vasya', scores: [], streak: 0, lastDaily: '',
@@ -48,7 +46,8 @@ function load(): SaveData {
 }
 
 export const save: SaveData = load();
-if (TEST_UNLOCK_ALL_LOCATIONS) save.locUnlocked = [...ALL_LOCS];
+// Локации теперь открываются прохождением. Один раз сбрасываем тестовое «всё открыто» и старые покупки.
+if (!save.locFix) { save.locFix = true; save.locUnlocked = ['canteen']; save.loc = 'canteen'; commit(); }
 
 export function commit(): void {
   try { localStorage.setItem(KEY, JSON.stringify(save)); } catch { /* ignore */ }

@@ -214,7 +214,7 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     const { game, input } = await boot('canteen');
     game.start(); game.waveState = 'break'; game.breakT = 999;
     game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
-    game.wave = 25; game.p.invuln = 1e9; game.p.x = 0; game.p.z = 9;
+    game.locIndex = 5; game.wave = 5; game.p.invuln = 1e9; game.p.x = 0; game.p.z = 9;
     const e = game.spawnEnemy('cub', { x: 0, z: 6.5 });
     let glued = 0, frames = 0, minD = 99, hits = 0;
     const baseHurt = game.hurtPlayer.bind(game);
@@ -228,8 +228,54 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
       frames++; minD = Math.min(minD, d);
       if (d < (e.r + game.p.r) * 0.6) glued++;
     }
-    console.log('  быстрый медведь на волне 25: скорость', e.spd.toFixed(2), 'против', game.stats.speed.toFixed(2), '| минимальная дистанция', minD.toFixed(2), '| «внутри» игрока кадров:', glued, 'из', frames);
+    console.log('  быстрый медведь на позднем этапе: скорость', e.spd.toFixed(2), 'против', game.stats.speed.toFixed(2), '| минимальная дистанция', minD.toFixed(2), '| «внутри» игрока кадров:', glued, 'из', frames);
     ok(glued < frames * 0.03, 'медведь не сидит «внутри» игрока и не приклеивается');
+  }
+  // ---------- 5e. Прогрессия: 5 волн, выход, следующая локация, открытие
+  {
+    const { game } = await boot('canteen');
+    const { save } = await import('../src/save');
+    save.locUnlocked = ['canteen'];
+    game.start(); game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    ok(save.locUnlocked.length === 1, 'в начале открыта только столовая');
+    // длины волн и лимиты
+    const sizes = [1, 2, 3, 4, 5].map(w => { game.wave = w; game.locIndex = 0; return game['buildQueue'](w).length; });
+    console.log('  размер волн в столовой:', sizes.join(', '), '(раньше было 11/14/17/20/..)');
+    ok(sizes[0] <= 8 && Math.max(...sizes) <= 14, 'волны заметно меньше прежних');
+    game.wave = 5; game.locIndex = 0; game.waveState = 'fight'; game.queue = []; game.enemies.forEach((e: any) => game.scene.remove(e.rig.root)); game.enemies = [];
+    game.update(1 / 30);
+    ok(game.waveState === 'exit' && game.exitMarker.visible, 'после 5-й волны (босса) открылся выход');
+    game.p.x = 0; game.p.z = 14.2; game.p.invuln = 1e9;
+    game.update(1 / 30);
+    ok(game.locIndex === 1 && game.locDef.id === 'barrack', 'игрок прошёл в дверь — следующая локация (Барак)');
+    ok(save.locUnlocked.includes('barrack'), 'Барак открыт навсегда');
+    ok(game.wave === 0 && game.waveState === 'break' && game.npcs.length === 4, 'на новой локации новые люди и отсчёт волн с начала');
+    // последняя локация → победа
+    game.locIndex = 5; game.locDef = game.locDef; game.wave = 5; game.waveState = 'fight'; game.queue = []; game.enemies = [];
+    for (let i = 0; i < 30 * 4 && game.mode !== 'over'; i++) game.update(1 / 30);
+    ok(game.mode === 'over' && game.result.victory, 'после последней локации — победа');
+  }
+  // ---------- 5f. Игрок заходит в будку: дверь открывается, внутри можно отсидеться, медведь ломает дверь
+  {
+    const { game } = await boot('sawmill');
+    game.start(); game.waveState = 'break'; game.breakT = 999;
+    game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    const sh = game.level.shelters[0];
+    const input = game.input;
+    game.p.x = sh.outPt.x; game.p.z = sh.outPt.z; game.p.invuln = 0.1; game.p.hp = 30;
+    input.vector = (o: any) => { o.x = 0; o.z = -sh.fz * 1; };      // идём к двери и внутрь
+    let opened = false, inside = false;
+    for (let i = 0; i < 30 * 5; i++) { game.update(1 / 30); if (sh.open) opened = true; if (game['playerShelter']() === sh) inside = true; }
+    ok(opened, 'дверь будки открылась перед игроком');
+    ok(inside, 'игрок зашёл внутрь будки');
+    input.vector = (o: any) => { o.x = 0; o.z = 0; };
+    const hp0 = game.p.hp;
+    step(game, 2);
+    ok(!sh.open && game.p.hp > hp0, 'дверь закрылась за ним, внутри здоровье восстанавливается (' + Math.round(hp0) + ' → ' + Math.round(game.p.hp) + ')');
+    const e = game.spawnEnemy('tank', { x: sh.outPt.x, z: sh.outPt.z + sh.fz * 3 }); void e;
+    game.p.invuln = 1e9;
+    for (let i = 0; i < 30 * 25 && !sh.broken; i++) game.update(1 / 30);
+    ok(sh.broken, 'медведь выломал дверь, пока игрок отсиживался');
   }
   // ---------- 6. Длинный прогон со всеми локациями: нет исключений и NaN
   for (const loc of ['canteen', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {

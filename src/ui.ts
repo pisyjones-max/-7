@@ -110,9 +110,8 @@ export class UI implements GameEvents {
       case 'locs': this.locsScreen(); break;
       case 'loc': {
         const l = LOCATIONS.find(x => x.id === arg)!;
-        if (save.locUnlocked.includes(l.id)) { g.setLocation(l.id); save.loc = l.id; }
-        else if (save.coins >= l.cost) { save.coins -= l.cost; save.locUnlocked.push(l.id); g.setLocation(l.id); save.loc = l.id; audio.play('levelup'); }
-        commit(); this.locsScreen(); break;
+        if (save.locUnlocked.includes(l.id)) { g.setLocation(l.id); save.loc = l.id; commit(); }
+        this.locsScreen(); break;
       }
       case 'cont': this.screens.innerHTML = ''; g.continueRun(); break;
       case 'endrun': this.screens.innerHTML = ''; g.endRun(); break;
@@ -172,17 +171,18 @@ export class UI implements GameEvents {
   }
 
   private locsScreen(): void {
-    const cards = LOCATIONS.map(l => {
+    const cards = LOCATIONS.map((l, i) => {
       const own = save.locUnlocked.includes(l.id);
       const sel = save.loc === l.id;
-      const action = own ? (sel ? 'ВЫБРАНА' : 'ВЫБРАТЬ') : (save.coins >= l.cost ? `КУПИТЬ ${l.cost}🪙` : `🔒 ${l.cost}🪙`);
+      const prev = i > 0 ? LOCATIONS[i - 1].name : '';
+      const action = own ? (sel ? 'ВЫБРАНА' : 'НАЧАТЬ ТУТ') : '🔒 ЗАКРЫТО';
       return `<div class="card ${sel ? 'sel' : ''}">
-        <div class="em">${l.emoji}</div>
-        <div class="ct"><b>${l.name}</b><p>${l.desc}</p></div>
-        <button class="btn sm ${own || save.coins >= l.cost ? '' : 'dis'}" data-act="loc" data-arg="${l.id}">${action}</button>
+        <div class="em">${own ? l.emoji : '🔒'}</div>
+        <div class="ct"><b>${l.name}</b><p>${own ? l.desc : 'Откроется, когда пройдёшь «' + prev + '» до конца (5 волн).'}</p></div>
+        <button class="btn sm ${own ? '' : 'dis'}" data-act="loc" data-arg="${l.id}">${action}</button>
       </div>`;
     }).join('');
-    this.screens.innerHTML = `<div class="screen list"><h2>ЛОКАЦИИ</h2><div class="stats"><b>🪙 ${save.coins}</b></div><div class="scroll">${cards}</div>
+    this.screens.innerHTML = `<div class="screen list"><h2>ЛОКАЦИИ</h2><p class="hint">Забег: 5 волн на локации, потом проход дальше. Новые открываются прохождением.</p><div class="scroll">${cards}</div>
       <button class="btn" data-act="menu">← НАЗАД</button></div>`;
   }
 
@@ -238,9 +238,9 @@ export class UI implements GameEvents {
     this.lastRowId = r.score > 0 ? addScore(save.nick, r.score, r.wave, r.kills, r.loc) : 0;
     this.hudEl.classList.add('hidden');
     this.screens.innerHTML = `<div class="screen center over">
-      <h2>ВЫ ПОГИБЛИ</h2><p class="title">${r.title}</p>
+      <h2>${r.victory ? 'ПОБЕДА!' : 'ВЫ ПОГИБЛИ'}</h2><p class="title">${r.title}</p>
       <div class="big-score">${r.score}${r.newBest ? '<span> НОВЫЙ РЕКОРД!</span>' : ''}</div>
-      <div class="grid"><div>🌊<b>${r.wave}</b>волна</div><div>🐻<b>${r.kills}</b>медведей</div><div>⭐<b>${r.lvl}</b>уровень</div><div>🪙<b>+${r.coins}</b>монет</div></div>
+      <div class="grid"><div>🌊<b>${r.wave}</b>волн</div><div>🐻<b>${r.kills}</b>медведей</div><div>⭐<b>${r.lvl}</b>уровень</div><div>🪙<b>+${r.coins}</b>монет</div></div>
       <p class="hint">${r.rank}. ${r.joke}</p>
       <p class="hint">♻️ Продолжения: ${continuesFor(save.bestWave)}/3. Дойди до волны 3, 6 и 10 — откроются все.</p>
       <input id="nick" maxlength="14" value="${this.esc(save.nick)}" placeholder="Ваше имя в рекордах" />
@@ -289,7 +289,7 @@ export class UI implements GameEvents {
     this.setCached('hpt', `❤️ ${Math.ceil(s.hp)}/${s.maxHp}`, this.e('hpText'), 'text');
     this.setCached('xpw', (s.xp / s.xpNext * 100).toFixed(0) + '%', this.e('xpFill'), 'width');
     this.setCached('lvl', 'УР. ' + s.lvl, this.e('lvlText'), 'text');
-    this.setCached('wave', 'ВОЛНА ' + s.wave + ' · 🐻' + s.left, this.e('waveText'), 'text');
+    this.setCached('wave', '📍 ' + s.locName + ' ' + s.locNo + '/' + s.locTotal + '\nВОЛНА ' + s.wave + '/' + s.wavesPer + ' · 🐻' + s.left, this.e('waveText'), 'text');
     this.setCached('score', '' + s.score, this.e('scoreText'), 'text');
     this.setCached('coin', '🪙 ' + s.coins + (s.continues > 0 ? ' · ♻️' + s.continues : ''), this.e('coinText'), 'text');
     const bomb = this.e('bombBtn');
