@@ -504,7 +504,15 @@ export class Game {
         if (diff < 1.2) { bestFront = d; front = e; }
       }
     }
+    // кто вплотную — тот опаснее всего: бьём его первым, даже если он за спиной у камеры
+    let close: Enemy | null = null, bestClose = 99;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const d = Math.hypot(e.x - p.x, e.z - p.z) - e.r;
+      if (d < 4.5 && d < bestClose) { bestClose = d; close = e; }
+    }
     if (front) target = front;
+    if (close) target = close;
     let want = p.face;
     if (target) want = Math.atan2(target.x - p.x, target.z - p.z);
     else if (mag > 0.2) { this.moveVec(tmp); want = Math.atan2(tmp.x, tmp.z); }

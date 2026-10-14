@@ -193,6 +193,22 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     ok(closest < 3, 'медведь догоняет людей (ближе всего ' + closest.toFixed(1) + ')');
     ok(game.npcs.some((n: any) => n.state === 'dead' || n.state === 'down' || n.kind === 'helper') || e.dead, 'нападение/спасение отработало');
   }
+  // ---------- 5c. Вид от 3-го лица: медведь вплотную за спиной тоже получает пули
+  {
+    const { game, input } = await boot('canteen');
+    const { save } = await import('../src/save');
+    save.camMode = 'chase'; game.camMode = 'chase';
+    game.start(); game.waveState = 'break'; game.breakT = 999;
+    game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    game.p.x = 0; game.p.z = 5; game.p.invuln = 1e9; game.camYaw = Math.PI;
+    input.vector = (o: any) => { o.x = 0; o.z = 0; };
+    const behind = game.spawnEnemy('bear', { x: 0, z: 7.0 });
+    const far = game.spawnEnemy('bear', { x: 0, z: -4 }); far.spd = 0; far.hp = far.maxHp = 1e6;
+    behind.spd = 0;
+    for (let i = 0; i < 30 * 12 && !behind.dead; i++) game.update(1 / 30);
+    ok(behind.dead || behind.hp < behind.maxHp * 0.3 || behind.fin === 1, 'медведь вплотную за спиной убит/добивается (hp ' + Math.round(behind.hp) + '/' + Math.round(behind.maxHp) + ')');
+    save.camMode = 'top'; game.camMode = 'top';
+  }
   // ---------- 6. Длинный прогон со всеми локациями: нет исключений и NaN
   for (const loc of ['canteen', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {
     const { game, input } = await boot(loc);
