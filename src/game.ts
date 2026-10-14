@@ -37,7 +37,7 @@ interface Enemy {
   spd: number; dmg: number; flash: number; atkCd: number; t: number; face: number; stun: number; slow: number;
   shootCd: number; side: number; dead: boolean; deadT: number; fvx: number; fvz: number; fy: number; fvy: number;
   tkind: 'player' | 'npc' | 'lure' | 'wander' | 'door'; tnpc: Npc | null; tx: number; tz: number; retarget: number; lureT: number; lureX: number; lureZ: number;
-  aggro: Npc | null; aggroT: number; blockT: number; detourT: number; detourSign: number; wAng: number; netT: number;
+  recoilT: number; aggro: Npc | null; aggroT: number; blockT: number; detourT: number; detourSign: number; wAng: number; netT: number;
   fin: number; finT: number; sawCd: number; lunge: number; lungeCd: number; enraged: boolean; rear: number; rearT: number; rearCd: number;
   bState: 'chase' | 'wind' | 'charge' | 'rest'; bT: number; bCd: number; cx: number; cz: number; sum1: boolean; sum2: boolean; ring: number;
 }
@@ -742,7 +742,7 @@ export class Game {
     const w = this.wave, big = !!this.mods?.bigBears && !def.boss;
     const bossIdx = Math.floor(w / 5);
     const hp = def.hp * (def.boss ? 1 + Math.max(0, bossIdx - 1) * 0.6 : 1 + (w - 1) * 0.16) * (big ? 1.3 : 1);
-    const spd = def.speed * (def.boss ? 1 : Math.min(1.35, 1 + (w - 1) * 0.02)) * (this.mods?.fastBears ? 1.25 : 1);
+    const spd = Math.min(def.speed * (def.boss ? 1 : Math.min(1.35, 1 + (w - 1) * 0.02)) * (this.mods?.fastBears ? 1.25 : 1), def.id === 'dog' ? 5.6 : 4.7);
     let sx = at?.x ?? 0, sz = at?.z ?? 0;
     if (!at) {
       const sp = this.level.spawns;
@@ -758,7 +758,7 @@ export class Game {
     const e: Enemy = {
       def, rig, x: sx, z: sz, vx: 0, vz: 0, hp, maxHp: hp, r: def.radius * (big ? 1.25 : 1), spd, dmg: def.dmg * (1 + (w - 1) * 0.04),
       flash: 0, atkCd: 0.6, t: Math.random() * 6, face: 0, stun: 0, slow: 0, shootCd: 1 + Math.random() * 1.5, side: Math.random() < 0.5 ? -1 : 1,
-      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, tkind: 'player', tnpc: null, tx: sx, tz: sz, retarget: 0, lureT: 0, lureX: 0, lureZ: 0, aggro: null, aggroT: 0, blockT: 0, detourT: 0, detourSign: 1, wAng: Math.random() * 6, netT: 0,
+      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, tkind: 'player', tnpc: null, tx: sx, tz: sz, retarget: 0, lureT: 0, lureX: 0, lureZ: 0, recoilT: 0, aggro: null, aggroT: 0, blockT: 0, detourT: 0, detourSign: 1, wAng: Math.random() * 6, netT: 0,
       fin: 0, finT: 0, sawCd: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, rear: 0, rearT: 0, rearCd: 2 + Math.random() * 4, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
     };
     this.enemies.push(e);
@@ -807,7 +807,7 @@ export class Game {
       let contactMul = 1;
       // ЯРОСТЬ: при низком здоровье медведь звереет
       if (!e.enraged && !e.def.boss && e.hp < e.maxHp * 0.5) {
-        e.enraged = true; e.spd *= 1.3; e.dmg *= 1.2;
+        e.enraged = true; e.spd = Math.min(e.spd * 1.25, e.def.id === 'dog' ? 5.8 : 4.9); e.dmg *= 1.2;
         this.burst(e.x, 1.6 * e.def.size, e.z, 6, [0xff3020, 0xffa030], 3, 3, 0.14, 0.5);
         if (Math.random() < 0.4) this.say('РРРЫЫЫ! ТЫ МЕНЯ ЗЛИШЬ!', 'b');
       }
@@ -883,6 +883,13 @@ export class Game {
         } else if (this.bossRef === e) { this.warnLine.visible = false; if (e.flash <= 0 && e.bState === 'charge') setFlash(e.rig, null); }
       }
 
+      if (!e.def.boss) {
+        if (e.recoilT > 0) { e.recoilT -= dt; mx = -nx; mz = -nz; speed = e.spd * 0.55; }  // ударил — отскочил, дал вздохнуть
+        else if (e.tkind === 'player' || e.tkind === 'npc') {
+          const tr = e.tkind === 'npc' && e.tnpc ? e.tnpc.r : p.r;
+          if (dist < e.r + tr + 0.1) speed *= 0.08;   // уже вплотную — не лезет в центр
+        }
+      } else if (e.bState !== 'charge' && dist < e.r + p.r + 0.1) speed *= 0.08;
       if (e.detourT > 0) { e.detourT -= dt; const c = Math.cos(e.detourSign * 1.15), s = Math.sin(e.detourSign * 1.15); const a = mx * c - mz * s; mz = mx * s + mz * c; mx = a; }
       const ox = e.x, oz = e.z;
       e.x += (mx * speed + e.vx) * dt; e.z += (mz * speed + e.vz) * dt;
@@ -895,6 +902,11 @@ export class Game {
         if (hit.hp !== undefined) { if (e.blockT > 0.4) this.damageObstacle(hit, e.dmg * dt * 2.4); } // ломает мебель и двери
         else if (e.blockT > 0.5) { e.detourT = 0.8; e.detourSign = Math.random() < 0.5 ? -1 : 1; e.blockT = 0; } // обходит
       } else e.blockT = Math.max(0, e.blockT - dt * 2);
+      // мягкое отталкивание от игрока: никакого «слипания»
+      if (this.mode === 'play') {
+        const sdx = e.x - p.x, sdz = e.z - p.z, sd = Math.hypot(sdx, sdz), minD = (e.r + p.r) * 0.85;
+        if (sd < minD) { const ux = sd > 1e-4 ? sdx / sd : 1, uz = sd > 1e-4 ? sdz / sd : 0; e.x = p.x + ux * minD; e.z = p.z + uz * minD; resolveCircle(e.x, e.z, e.r, this.level.obstacles, tmp); e.x = tmp.x; e.z = tmp.z; }
+      }
       // нападение на людей
       if (this.mode === 'play' && e.atkCd <= 0) {
         for (const n of this.npcs) {
@@ -912,6 +924,7 @@ export class Game {
       const pd = Math.hypot(p.x - e.x, p.z - e.z);
       if (pd < e.r + p.r + 0.12 && e.atkCd <= 0 && this.mode === 'play') {
         e.atkCd = 0.9;
+        if (!e.def.boss) { e.recoilT = 0.55; const rl = Math.hypot(e.x - p.x, e.z - p.z) || 1; e.vx += ((e.x - p.x) / rl) * 5; e.vz += ((e.z - p.z) / rl) * 5; }
         this.hurtPlayer(e.dmg * contactMul, e.def.id, e.x, e.z);
       }
 

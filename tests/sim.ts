@@ -209,6 +209,28 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     ok(behind.dead || behind.hp < behind.maxHp * 0.3 || behind.fin === 1, 'медведь вплотную за спиной убит/добивается (hp ' + Math.round(behind.hp) + '/' + Math.round(behind.maxHp) + ')');
     save.camMode = 'top'; game.camMode = 'top';
   }
+  // ---------- 5d. Медведь не «приклеивается» к игроку на бегу
+  {
+    const { game, input } = await boot('canteen');
+    game.start(); game.waveState = 'break'; game.breakT = 999;
+    game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    game.wave = 25; game.p.invuln = 1e9; game.p.x = 0; game.p.z = 9;
+    const e = game.spawnEnemy('cub', { x: 0, z: 6.5 });
+    let glued = 0, frames = 0, minD = 99, hits = 0;
+    const baseHurt = game.hurtPlayer.bind(game);
+    game.hurtPlayer = (...a: any[]) => { hits++; return baseHurt(...a); };
+    let i = 0;
+    input.vector = (o: any) => { o.x = Math.sin(i / 50) * 0.9; o.z = Math.cos(i / 37) * 0.9; };
+    for (i = 0; i < 30 * 30; i++) {
+      game.update(1 / 30);
+      if (i < 30) continue;
+      const d = Math.hypot(e.x - game.p.x, e.z - game.p.z);
+      frames++; minD = Math.min(minD, d);
+      if (d < (e.r + game.p.r) * 0.6) glued++;
+    }
+    console.log('  быстрый медведь на волне 25: скорость', e.spd.toFixed(2), 'против', game.stats.speed.toFixed(2), '| минимальная дистанция', minD.toFixed(2), '| «внутри» игрока кадров:', glued, 'из', frames);
+    ok(glued < frames * 0.03, 'медведь не сидит «внутри» игрока и не приклеивается');
+  }
   // ---------- 6. Длинный прогон со всеми локациями: нет исключений и NaN
   for (const loc of ['canteen', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {
     const { game, input } = await boot(loc);
