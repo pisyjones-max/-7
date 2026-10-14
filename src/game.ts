@@ -18,6 +18,7 @@ export interface RunResult {
   score: number; wave: number; kills: number; coins: number; lvl: number; title: string; rank: string; joke: string; loc: string; victory: boolean; newBest: boolean; time: number;
 }
 export interface GameEvents {
+  weaponChoice(cards: WeaponDef[]): void;
   continuePrompt(left: number, wave: number): void;
   finish(on: boolean): void;
   hud(s: HudState): void;
@@ -136,7 +137,7 @@ export class Game {
   private p = {
     x: 0, z: 8.5, kx: 0, kz: 0, r: 0.45, hp: 100, face: 0, invuln: 0, fireCd: 0, weapon: 'spoon', weaponT: 0, fixedWeapon: false,
     bombCd: 3, xp: 0, xpNext: 8, lvl: 1, kills: 0, runCoins: 0, combo: 0, comboT: 0, score: 0, animT: 0, moving: 0, flash: 0,
-    lowHpSaid: false, deathTilt: 0,
+    lowHpSaid: false, deathTilt: 0, ammo: 0,
   };
   private stats: Stats = this.baseStats();
   private upCount: Record<string, number> = {};
@@ -171,6 +172,8 @@ export class Game {
   private netMeshes: { mesh: THREE.Mesh; e: Enemy | null }[] = [];
   private continuesLeft = 0;
   private finished = false;
+  private chooseKind: 'upgrade' | 'weapon' = 'upgrade';
+  private supplyT = 20;
   private locIndex = 0;
   private exitMarker: THREE.Group = new THREE.Group();
   private victory = false;
@@ -416,7 +419,7 @@ export class Game {
     const p = this.p;
     Object.assign(p, {
       x: 0, z: 10, kx: 0, kz: 0, r: def.hitR, hp: this.stats.maxHp, face: Math.PI, invuln: 1, fireCd: 0.3,
-      weapon: this.mods?.extOnly ? 'extinguisher' : 'spoon', weaponT: 0, fixedWeapon: !!this.mods?.extOnly, bombCd: 3, xp: 0, xpNext: 8, lvl: 1,
+      weapon: this.mods?.extOnly ? 'extinguisher' : 'spoon', weaponT: 0, ammo: 0, fixedWeapon: !!this.mods?.extOnly, bombCd: 3, xp: 0, xpNext: 8, lvl: 1,
       kills: 0, runCoins: 0, combo: 0, comboT: 0, score: 0, animT: 0, moving: 0, flash: 0, lowHpSaid: false, deathTilt: 0,
     });
     this.rig.root.rotation.x = 0;
@@ -545,7 +548,7 @@ export class Game {
       this.fire(w, Math.atan2(target.x - p.x, target.z - p.z));
       p.fireCd = w.rate / s.rateMul;
     }
-    if (!p.fixedWeapon && p.weapon !== 'spoon') {
+    if (!p.fixedWeapon && p.weapon !== 'spoon' && !WEAPONS[p.weapon].ammo) {
       p.weaponT -= dt;
       if (p.weaponT <= 0) { p.weapon = 'spoon'; this.say('Опять поварёшка... Классика!', 'p', true); }
     }
@@ -583,6 +586,7 @@ export class Game {
         dmg: w.dmg * s.dmgMul * (crit ? 2.5 : 1), pierce: w.pierce + s.pierce, w, hit: [], crit, ang: a, owner: null,
       });
     }
+    if (w.ammo) { p.ammo--; if (p.ammo <= 0) { p.weapon = 'spoon'; this.say('Патроны кончились... Опять поварёшка!', 'p', true); } }
     audio.play(w.sfx);
     // отдача-анимация и вспышка
     this.burst(p.x + Math.sin(ang) * 0.9, 1.2, p.z + Math.cos(ang) * 0.9, 2, [0xffe58a, 0xffffff], 2.5, 1, 0.1, 0.18, 0);
@@ -667,6 +671,7 @@ export class Game {
     const w = this.wave;
     this.waveState = 'fight';
     for (const n of this.npcs) if (n.state === 'dead') this.reviveNpc(n);
+    if (w >= 2 && w < WAVES_PER_LOC && Math.random() < 0.4 && !this.picks.some(q => q.kind === 'crate')) this.dropCrate(false);
     this.queue = this.buildQueue(w);
     this.spawnGap = Math.max(0.55, 1.35 - this.stage() * 0.035);
     this.spawnT = 0.6;
@@ -755,6 +760,8 @@ export class Game {
       if (this.breakT <= 0) this.startWave();
       return;
     }
+    this.supplyT -= dt;
+    if (this.supplyT <= 0 && this.aliveCount() >= 7 && !this.picks.some(q => q.kind === 'crate')) { this.dropCrate(true); this.supplyT = 28; }
     this.spawnT -= dt;
     const cap = this.wave === WAVES_PER_LOC ? 9 + Math.min(this.locIndex, 3) : 8 + Math.min(this.locIndex * 2, 6);
     const alive = this.aliveCount();
@@ -1362,11 +1369,13 @@ export class Game {
       case 'ammo': this.giveItem(ITEM_KINDS[Math.max(0, Math.min(3, Math.round(q.val)))]); break;
       case 'crate': {
         if (p.fixedWeapon) { p.runCoins += 15; break; }
-        const id = pick(CRATE_WEAPONS.filter(w => w !== p.weapon));
-        p.weapon = id; p.weaponT = 18;
+        const pool = CRATE_WEAPONS.filter(w => w !== p.weapon);
+        const cards: WeaponDef[] = [];
+        while (cards.length < 3 && pool.length) cards.push(WEAPONS[pool.splice(Math.floor(Math.random() * pool.length), 1)[0]]);
+        this.mode = 'choose'; this.chooseKind = 'weapon';
+        this.input.setEnabled(false);
         audio.play('pickup');
-        this.events.banner(WEAPONS[id].icon + ' ' + WEAPONS[id].name.toUpperCase(), '18 секунд мощи!', 'event');
-        this.say(WEAPONS[id].quip, 'p', true);
+        this.events.weaponChoice(cards);
         break;
       }
     }
@@ -1384,7 +1393,7 @@ export class Game {
   }
 
   cancelChoose(): void {
-    if (this.mode !== 'choose') return;
+    if (this.mode !== 'choose' || this.chooseKind !== 'upgrade') return;
     this.mode = 'play';
     this.input.setEnabled(true);
   }
@@ -1394,14 +1403,41 @@ export class Game {
     if (!pool.length) { this.pendingLevels = 0; this.p.hp = this.stats.maxHp; return; }
     const cards: UpgradeDef[] = [];
     while (cards.length < 4 && pool.length) cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
-    this.mode = 'choose';
+    this.mode = 'choose'; this.chooseKind = 'upgrade';
     this.input.setEnabled(false);
     audio.play('levelup');
     this.events.levelUp(cards);
   }
 
+  /** Выбор оружия из ящика. Ящик — это базуки, пулемёт Максим и прочая тяжёлая артиллерия. */
+  pickWeapon(id: string): void {
+    if (this.mode !== 'choose' || this.chooseKind !== 'weapon') return;
+    const w = WEAPONS[id]; if (!w) return;
+    const p = this.p;
+    p.weapon = id; p.ammo = w.ammo ?? 0; p.weaponT = w.ammo ? 0 : 18; p.fireCd = 0.15;
+    this.mode = 'play'; this.input.setEnabled(true);
+    audio.play('levelup');
+    this.events.banner(w.icon + ' ' + w.name.toUpperCase(), w.desc ?? '18 секунд мощи!', 'event');
+    this.say(w.quip, 'p', true);
+  }
+
+  /** Ящик с оружием: сбрасывают в разгар мясорубки или можно нечаянно наткнуться. */
+  private dropCrate(near: boolean): void {
+    const p = this.p;
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2, d = 3 + Math.random() * 3;
+      const x = near ? p.x + Math.cos(a) * d : (Math.random() - 0.5) * 10, z = near ? p.z + Math.sin(a) * d : (Math.random() - 0.5) * 24;
+      resolveCircle(x, z, 0.7, this.level.obstacles, tmp);
+      if (Math.hypot(tmp.x - x, tmp.z - z) > 0.05 || Math.abs(x) > ARENA.hx - 0.8 || Math.abs(z) > ARENA.hz - 0.8) continue;
+      this.addPickup('crate', x, z, 1);
+      if (near) { this.events.banner('СБРОСИЛИ ЯЩИК!', 'Хватай оружие: базука, Максим…', 'event'); this.say('Подмога! Ящик с оружием!', 'sys', true); audio.play('wave'); }
+      else this.say('Где-то на карте лежит ящик с оружием!', 'sys');
+      return;
+    }
+  }
+
   pickUpgrade(id: string): void {
-    if (this.mode !== 'choose') return;
+    if (this.mode !== 'choose' || this.chooseKind !== 'upgrade') return;
     const u = UPGRADES.find(x => x.id === id);
     if (u) {
       u.apply(this.stats);
@@ -2212,7 +2248,7 @@ export class Game {
     this.events.hud({
       locName: this.locDef.name, locNo: this.locIndex + 1, locTotal: LOCATIONS.length, wavesPer: WAVES_PER_LOC, continues: this.continuesLeft, items: this.items, itemCd: Math.max(0, this.itemCd), points: this.pendingLevels, hp: Math.max(0, p.hp), maxHp: this.stats.maxHp, xp: p.xp, xpNext: p.xpNext, lvl: p.lvl, wave: Math.max(1, this.wave), score: p.score,
       coins: p.runCoins, bombFrac: Math.max(0, Math.min(1, 1 - p.bombCd / maxCd)), weaponIcon: w.icon, weaponName: w.name,
-      weaponFrac: p.weapon === 'spoon' || p.fixedWeapon ? 0 : Math.max(0, p.weaponT / 18), combo: p.combo,
+      weaponFrac: p.weapon === 'spoon' || p.fixedWeapon ? 0 : w.ammo ? Math.max(0.02, p.ammo / w.ammo) : Math.max(0, p.weaponT / 18), combo: p.combo,
       mult: Math.min(3, 1 + Math.floor(p.combo / 5) * 0.25), left: this.queue.length + this.aliveCount(),
     });
   }

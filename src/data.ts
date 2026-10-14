@@ -46,6 +46,8 @@ export interface WeaponDef {
   explode: number;
   sfx: 'shoot' | 'shoot2' | 'boomShot';
   quip: string;
+  ammo?: number;
+  desc?: string;
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
@@ -54,7 +56,11 @@ export const WEAPONS: Record<string, WeaponDef> = {
   extinguisher: { id: 'extinguisher', name: 'Огнетушитель', icon: '🧯', rate: 0.09, dmg: 3.4, speed: 12, life: 0.5, pellets: 1, spread: 0, jitter: 0.28, pierce: 3, knock: 3.2, size: 0.34, color: 0xf4f4ff, explode: 0, sfx: 'shoot', quip: 'ПШШШШ! Пожарная безопасность!' },
   samovar: { id: 'samovar', name: 'Самовар-пушка', icon: '🫖', rate: 1.15, dmg: 34, speed: 10, life: 1.1, pellets: 1, spread: 0, jitter: 0.02, pierce: 0, knock: 5, size: 0.5, color: 0xd9a030, explode: 2.6, sfx: 'boomShot', quip: 'Чай подан! Кипяток прилагается!' },
 };
-export const CRATE_WEAPONS = ['cutlet', 'extinguisher', 'samovar'];
+WEAPONS.bazooka = { id: 'bazooka', name: 'Базука', icon: '🚀', rate: 1.05, dmg: 75, speed: 15, life: 1.3, pellets: 1, spread: 0, jitter: 0.015, pierce: 0, knock: 7, size: 0.5, color: 0x8a4a22, explode: 3.5, sfx: 'boomShot', quip: 'БАЗУКА! Получите, косолапые!', ammo: 6, desc: 'Ракета, огромный взрыв. 6 зарядов.' };
+WEAPONS.maxim = { id: 'maxim', name: 'Пулемёт «Максим»', icon: '🔫', rate: 0.055, dmg: 7.5, speed: 24, life: 0.9, pellets: 1, spread: 0, jitter: 0.07, pierce: 1, knock: 1.4, size: 0.22, color: 0xffe08a, explode: 0, sfx: 'shoot', quip: 'Максим! Та-та-та-та-та!', ammo: 240, desc: 'Строчит как швейная машинка. 240 патронов.' };
+WEAPONS.double = { id: 'double', name: 'Двустволка', icon: '💥', rate: 0.8, dmg: 15, speed: 17, life: 0.5, pellets: 7, spread: 0.45, jitter: 0.05, pierce: 1, knock: 5, size: 0.28, color: 0xcccccc, explode: 0, sfx: 'shoot2', quip: 'Дуплетом! Бабах!', ammo: 28, desc: 'Картечь в упор, пробивает. 28 выстрелов.' };
+WEAPONS.flame = { id: 'flame', name: 'Огнемёт «Шашлычок»', icon: '🔥', rate: 0.06, dmg: 4.6, speed: 9.5, life: 0.48, pellets: 1, spread: 0, jitter: 0.26, pierce: 5, knock: 1, size: 0.42, color: 0xff7a20, explode: 0, sfx: 'shoot', quip: 'Шашлык будет! Огонь!', ammo: 170, desc: 'Поток огня, жарит всех в линию. 170 зарядов.' };
+export const CRATE_WEAPONS = ['cutlet', 'extinguisher', 'samovar', 'bazooka', 'maxim', 'double', 'flame'];
 
 export type EnemyKind = 'cub' | 'bear' | 'tank' | 'fisher' | 'potap' | 'mutant' | 'dog';
 

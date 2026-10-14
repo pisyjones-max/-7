@@ -277,6 +277,38 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     for (let i = 0; i < 30 * 25 && !sh.broken; i++) game.update(1 / 30);
     ok(sh.broken, 'медведь выломал дверь, пока игрок отсиживался');
   }
+  // ---------- 5g. Тяжёлое оружие из ящика: базука, Максим
+  {
+    const { game } = await boot('canteen');
+    let cards: any[] = [];
+    game.events.weaponChoice = (c: any[]) => { cards = c; };
+    game.start(); game.waveState = 'break'; game.breakT = 999;
+    game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    game.p.x = 0; game.p.z = 10; game.p.invuln = 1e9;
+    // ящик сбрасывают, когда на карте мясорубка
+    game.waveState = 'fight'; game.queue = []; game.supplyT = 0;
+    for (let i = 0; i < 8; i++) game.spawnEnemy('cub', { x: -4 + i, z: -2 });
+    game.update(1 / 30);
+    ok(game.picks.some((q: any) => q.kind === 'crate'), 'в разгар мясорубки сбросили ящик с оружием');
+    const crate = game.picks.find((q: any) => q.kind === 'crate');
+    game.p.x = crate.x; game.p.z = crate.z;
+    game.update(1 / 30);
+    ok(game.mode === 'choose' && cards.length === 3, 'ящик подобран — предложено выбрать из 3 видов оружия: ' + cards.map(c => c.name).join(', '));
+    game.pickWeapon('bazooka');
+    ok(game.mode === 'play' && game.p.weapon === 'bazooka' && game.p.ammo === 6, 'выбрана базука, 6 ракет');
+    game.p.x = 0; game.p.z = 10;
+    const hp0 = game.enemies.reduce((a: number, e: any) => a + e.hp, 0), n0 = game.enemies.length;
+    step(game, 3);
+    const hp1 = game.enemies.reduce((a: number, e: any) => a + e.hp, 0);
+    ok(game.p.ammo < 6, 'базука тратит ракеты (' + game.p.ammo + ')');
+    ok(game.enemies.length < n0 || hp1 < hp0 * 0.7, 'ракеты выкашивают толпу (' + n0 + ' → ' + game.enemies.length + ' медведей)');
+    game.p.weapon = 'maxim'; game.p.ammo = 240; game.p.fireCd = 0;
+    for (let i = 0; i < 6; i++) game.spawnEnemy('bear', { x: -3 + i, z: -6 });
+    const a0 = game.p.ammo; step(game, 2);
+    ok(a0 - game.p.ammo > 25, 'Максим строчит очередью (' + (a0 - game.p.ammo) + ' патронов за 2 с)');
+    game.p.ammo = 1; step(game, 1);
+    ok(game.p.weapon === 'spoon', 'патроны кончились — вернулась поварёшка');
+  }
   // ---------- 6. Длинный прогон со всеми локациями: нет исключений и NaN
   for (const loc of ['canteen', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {
     const { game, input } = await boot(loc);

@@ -1,4 +1,4 @@
-import { CHARS, continuesFor, todayMutator, type UpgradeDef } from './data';
+import { CHARS, continuesFor, todayMutator, type UpgradeDef, type WeaponDef } from './data';
 import { LOCATIONS } from './level';
 import type { Game, GameEvents, HudState, RunResult } from './game';
 import type { Input } from './input';
@@ -115,6 +115,7 @@ export class UI implements GameEvents {
       }
       case 'cont': this.screens.innerHTML = ''; g.continueRun(); break;
       case 'endrun': this.screens.innerHTML = ''; g.endRun(); break;
+      case 'weapon': this.screens.innerHTML = ''; g.pickWeapon(arg); break;
       case 'skipUp': this.screens.innerHTML = ''; g.cancelChoose(); break;
       case 'cam': g.setCamMode(save.camMode === 'top' ? 'chase' : 'top'); this.menu(); break;
       case 'mut': save.mutator = !save.mutator; commit(); this.menu(); break;
@@ -224,6 +225,12 @@ export class UI implements GameEvents {
       ${cards.map(u => `<button class="btn card2" data-act="upgrade" data-arg="${u.id}"><span class="ic">${u.icon}</span><span><b>${u.name}</b><small>${u.desc}</small></span></button>`).join('')}
       <button class="btn sm" data-act="skipUp">ПОТОМ</button></div>`;
     this.input.release();
+  }
+
+  weaponChoice(cards: WeaponDef[]): void {
+    this.input.release();
+    this.screens.innerHTML = `<div class="screen center"><h2>ЯЩИК С ОРУЖИЕМ!</h2><p class="hint">Выбирай, чем будешь крошить медведей</p>
+      ${cards.map(w => `<button class="btn card2" data-act="weapon" data-arg="${w.id}"><span class="ic">${w.icon}</span><span><b>${w.name}</b><small>${w.desc ?? '18 секунд мощи'}</small></span></button>`).join('')}</div>`;
   }
 
   continuePrompt(left: number, wave: number): void {
