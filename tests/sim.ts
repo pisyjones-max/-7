@@ -25,7 +25,7 @@ async function boot(loc: string, bestWave = 0) {
   const game: any = new Game(fakeCanvas() as any, input, fakeRenderer);
   game.events = {
     hud() {}, quip(t: string) { log.push('quip:' + t); }, banner(t: string) { log.push('banner:' + t); }, float() {}, levelUp() {}, gameOver(r: any) { log.push('over:' + r.score); },
-    bossBar() {}, hurt() {}, finish() {}, continuePrompt(l: number) { log.push('continue:' + l); },
+    bossBar() {}, hurt() {}, finish() {}, weaponChoice() {}, continuePrompt(l: number) { log.push('continue:' + l); },
   };
   return { game, log, input };
 }
@@ -319,7 +319,7 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
       input.x = Math.sin(i / 40); input.z = Math.cos(i / 55);
       input.vector = (o: any) => { o.x = Math.sin(i / 40) * 0.8; o.z = Math.cos(i / 55) * 0.8; };
       game.update(1 / 30);
-      if (game.mode === 'choose') game.pickUpgrade('dmg');
+      if (game.mode === 'choose') { if (game.chooseKind === 'weapon') game.pickWeapon('maxim'); else game.pickUpgrade('dmg'); }
       if (bad(game)) nan = true;
       if (i % 200 === 0) game.useItem(['frag', 'smoke', 'decoy', 'net'][(i / 200) % 4 | 0]);
     }
