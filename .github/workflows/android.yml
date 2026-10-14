@@ -23,6 +23,7 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - run: npx cap sync android
       - run: chmod +x android/gradlew

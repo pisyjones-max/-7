@@ -1,4 +1,4 @@
-import { CHARS, todayMutator, type UpgradeDef } from './data';
+import { CHARS, continuesFor, todayMutator, type UpgradeDef } from './data';
 import { LOCATIONS } from './level';
 import type { Game, GameEvents, HudState, RunResult } from './game';
 import type { Input } from './input';
@@ -43,6 +43,10 @@ export class UI implements GameEvents {
         <div id="combo" class="combo hidden"></div>
         <div id="weapon" class="weapon hidden"><span id="wIcon"></span><div class="bar"><i id="wFill"></i></div></div>
         <div id="floats"></div>
+        <div id="itemBar">
+          <button class="it" data-item="frag"><span>💣</span><b>0</b></button><button class="it" data-item="smoke"><span>🌫️</span><b>0</b></button>
+          <button class="it" data-item="decoy"><span>📻</span><b>0</b></button><button class="it" data-item="net"><span>🕸️</span><b>0</b></button>
+        </div>
         <button id="finBtn" class="hidden">💀 ДОБЕЙ ЕГО!</button>
         <button id="upBtn"><span>⭐</span><b id="upCount">0</b><small>ПРОКАЧКА</small></button>
         <button id="bombBtn"><span>🍲</span><small>БОРЩ</small><div id="bombCd"></div></button>
@@ -62,6 +66,9 @@ export class UI implements GameEvents {
     game.events = this;
     const bomb = $(this.root, '#bombBtn');
     bomb.addEventListener('pointerdown', e => { e.preventDefault(); input.bombPressed = true; });
+    this.root.querySelectorAll<HTMLElement>('#itemBar .it').forEach(b => {
+      b.addEventListener('pointerdown', e => { e.preventDefault(); game.useItem(b.dataset.item as 'frag' | 'smoke' | 'decoy' | 'net'); });
+    });
     $(this.root, '#finBtn').addEventListener('pointerdown', e => { e.preventDefault(); game.doFinisher(); });
     $(this.root, '#upBtn').addEventListener('pointerdown', e => {
       e.preventDefault();
@@ -107,6 +114,8 @@ export class UI implements GameEvents {
         else if (save.coins >= l.cost) { save.coins -= l.cost; save.locUnlocked.push(l.id); g.setLocation(l.id); save.loc = l.id; audio.play('levelup'); }
         commit(); this.locsScreen(); break;
       }
+      case 'cont': this.screens.innerHTML = ''; g.continueRun(); break;
+      case 'endrun': this.screens.innerHTML = ''; g.endRun(); break;
       case 'skipUp': this.screens.innerHTML = ''; g.cancelChoose(); break;
       case 'cam': g.setCamMode(save.camMode === 'top' ? 'chase' : 'top'); this.menu(); break;
       case 'mut': save.mutator = !save.mutator; commit(); this.menu(); break;
@@ -144,7 +153,7 @@ export class UI implements GameEvents {
     this.screens.innerHTML = `
       <div class="screen menu">
         <div class="logo poster"><div class="star">★</div><span class="l1">СТОЛОВАЯ</span><span class="l2">№7</span><i class="band">КРОВАВАЯ</i><small>ТОВАРИЩ! ОБЕД НАЧАЛСЯ. ДЕРЖИ ПОВАРЁШКУ!</small></div>
-        <div class="stats"><b>🪙 ${save.coins}</b><b>🏆 ${save.best}</b></div>
+        <div class="stats"><b>🪙 ${save.coins}</b><b>🏆 ${save.best}</b><b>♻️ ${continuesFor(save.bestWave)}/3</b></div>
         ${toast ? `<div class="toast">${toast}</div>` : ''}
         <div class="spacer"></div>
         ${canDaily ? `<button class="btn gold" data-act="daily">🎁 ЕЖЕДНЕВНЫЙ ПОДАРОК +${reward}🪙</button>` : ''}
@@ -217,6 +226,13 @@ export class UI implements GameEvents {
     this.input.release();
   }
 
+  continuePrompt(left: number, wave: number): void {
+    this.input.release();
+    this.screens.innerHTML = `<div class="screen center"><h2>ВЫ ПОГИБЛИ</h2><p class="hint">Волна ${wave}. Награды за забег не пропадут.</p>
+      <button class="btn big" data-act="cont">♻️ ПРОДОЛЖИТЬ <small>осталось продолжений: ${left}</small></button>
+      <button class="btn" data-act="endrun">ЗАКОНЧИТЬ ЗАБЕГ</button></div>`;
+  }
+
   gameOver(r: RunResult): void {
     this.lastResult = r;
     this.lastRowId = r.score > 0 ? addScore(save.nick, r.score, r.wave, r.kills, r.loc) : 0;
@@ -226,6 +242,7 @@ export class UI implements GameEvents {
       <div class="big-score">${r.score}${r.newBest ? '<span> НОВЫЙ РЕКОРД!</span>' : ''}</div>
       <div class="grid"><div>🌊<b>${r.wave}</b>волна</div><div>🐻<b>${r.kills}</b>медведей</div><div>⭐<b>${r.lvl}</b>уровень</div><div>🪙<b>+${r.coins}</b>монет</div></div>
       <p class="hint">${r.rank}. ${r.joke}</p>
+      <p class="hint">♻️ Продолжения: ${continuesFor(save.bestWave)}/3. Дойди до волны 3, 6 и 10 — откроются все.</p>
       <input id="nick" maxlength="14" value="${this.esc(save.nick)}" placeholder="Ваше имя в рекордах" />
       <button class="btn big" data-act="play">↻ ЕЩЁ РАЗ</button>
       <div class="row"><button class="btn gold" data-act="share">📣 ПОДЕЛИТЬСЯ</button><button class="btn" data-act="menu">МЕНЮ</button></div></div>`;
@@ -258,6 +275,13 @@ export class UI implements GameEvents {
 
   hud(s: HudState): void {
     this.points = s.points;
+    this.root.querySelectorAll<HTMLElement>('#itemBar .it').forEach(b => {
+      const k = b.dataset.item as 'frag' | 'smoke' | 'decoy' | 'net';
+      const c = String(s.items[k]);
+      if (this.cache['it' + k] !== c) { this.cache['it' + k] = c; $(b, 'b').textContent = c; b.classList.toggle('empty', s.items[k] <= 0); }
+    });
+    const cd = s.itemCd > 0 ? '1' : '0';
+    if (this.cache.itcd !== cd) { this.cache.itcd = cd; this.e('itemBar').classList.toggle('cd', s.itemCd > 0); }
     this.setCached('up', String(s.points), this.e('upCount'), 'text');
     const ub = this.e('upBtn');
     if (this.cache.upHas !== String(s.points > 0)) { this.cache.upHas = String(s.points > 0); ub.classList.toggle('has', s.points > 0); }
@@ -267,7 +291,7 @@ export class UI implements GameEvents {
     this.setCached('lvl', 'УР. ' + s.lvl, this.e('lvlText'), 'text');
     this.setCached('wave', 'ВОЛНА ' + s.wave + ' · 🐻' + s.left, this.e('waveText'), 'text');
     this.setCached('score', '' + s.score, this.e('scoreText'), 'text');
-    this.setCached('coin', '🪙 ' + s.coins, this.e('coinText'), 'text');
+    this.setCached('coin', '🪙 ' + s.coins + (s.continues > 0 ? ' · ♻️' + s.continues : ''), this.e('coinText'), 'text');
     const bomb = this.e('bombBtn');
     const ready = s.bombFrac >= 1;
     if (this.cache.bombReady !== String(ready)) { this.cache.bombReady = String(ready); bomb.classList.toggle('ready', ready); }

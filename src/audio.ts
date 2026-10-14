@@ -1,6 +1,6 @@
 // Весь звук синтезируется на лету (WebAudio) — никаких файлов, быстрый запуск.
 
-type Sfx = 'shoot' | 'shoot2' | 'boomShot' | 'hit' | 'die' | 'hurt' | 'coin' | 'pickup' | 'levelup' | 'boom' | 'roar' | 'click' | 'wave' | 'fish' | 'bark' | 'gong';
+type Sfx = 'shoot' | 'shoot2' | 'boomShot' | 'hit' | 'die' | 'hurt' | 'coin' | 'pickup' | 'levelup' | 'boom' | 'roar' | 'click' | 'wave' | 'fish' | 'bark' | 'gong' | 'decoy';
 
 // Народная «Коробейники» (общественное достояние), A-minor, MIDI + длительность в долях
 const MELODY: [number, number][] = [
@@ -90,6 +90,7 @@ class AudioSys {
       case 'click': this.tone(660, 0.05, 'square', 0.05); break;
       case 'wave': this.tone(330, 0.12, 'square', 0.07); this.tone(440, 0.12, 'square', 0.07, 0, 0.12); this.tone(660, 0.2, 'square', 0.07, 0, 0.24); break;
       case 'bark': this.tone(420 * r, 0.09, 'square', 0.07, -200); this.noise(0.05, 0.08, 1600); this.tone(330 * r, 0.09, 'square', 0.06, -150, 0.12); break;
+      case 'decoy': [392, 494, 587, 494].forEach((f, i) => this.tone(f, 0.12, 'square', 0.06, 0, i * 0.1)); break;
       case 'gong': this.tone(110, 1.4, 'sine', 0.22, -30); this.tone(165, 1.1, 'triangle', 0.1); this.noise(0.35, 0.12, 400); break;
       case 'fish': this.tone(700, 0.1, 'triangle', 0.05, -400); break;
     }

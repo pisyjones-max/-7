@@ -3,7 +3,22 @@ import * as THREE from 'three';
 import { box, merge, vcMat, buildHuman, animateRig, type Rig } from './models';
 import type { CharDef } from './data';
 
-export interface AABB { minX: number; maxX: number; minZ: number; maxZ: number }
+export interface AABB {
+  minX: number; maxX: number; minZ: number; maxZ: number;
+  off?: boolean;            // выключено (дверь открыта / предмет сломан)
+  mesh?: THREE.Object3D;    // у ломаемых предметов и дверей — свой меш
+  hp?: number;              // есть hp — медведи могут это сломать
+  color?: number;
+  shelter?: Shelter;
+}
+export interface Slot { x: number; z: number; occ: number }
+export interface Shelter {
+  x: number; z: number; fz: number; door: AABB; doorMesh: THREE.Mesh; slots: Slot[];
+  outPt: { x: number; z: number }; inPt: { x: number; z: number };
+  open: boolean; locked: boolean; broken: boolean; pending: number;
+}
+export type NpcKind = 'coward' | 'brave' | 'helper';
+export interface NpcSpawn { x: number; z: number; kind: NpcKind }
 export const ARENA = { hx: 6.2, hz: 15 };
 const { hx, hz } = ARENA;
 
@@ -13,6 +28,9 @@ export interface Level {
   spawns: { x: number; z: number }[];
   group: THREE.Group;
   saws: Saw[];
+  shelters: Shelter[];
+  npcs: NpcSpawn[];
+  outfit: 'convict' | 'civil' | 'village';
   anim: ((t: number) => void) | null;
   dispose(): void;
 }
@@ -34,14 +52,49 @@ type Geo = THREE.BufferGeometry;
 interface Ctx {
   scene: THREE.Scene; group: THREE.Group; parts: Geo[]; obstacles: AABB[]; spawns: { x: number; z: number }[];
   saws: Saw[]; anims: ((t: number) => void)[];
+  shelters: Shelter[]; npcs: NpcSpawn[]; cur: Geo[] | null; outfit: 'convict' | 'civil' | 'village';
 }
 
 function ctx(scene: THREE.Scene): Ctx {
   const group = new THREE.Group();
   scene.add(group);
-  return { scene, group, parts: [], obstacles: [], spawns: [], saws: [], anims: [] };
+  return { scene, group, parts: [], obstacles: [], spawns: [], saws: [], anims: [], shelters: [], npcs: [], cur: null, outfit: 'civil' };
 }
-const P = (c: Ctx, w: number, h: number, d: number, x: number, y: number, z: number, col: number) => { c.parts.push(box(w, h, d, x, y, z, col)); };
+const P = (c: Ctx, w: number, h: number, d: number, x: number, y: number, z: number, col: number) => { (c.cur ?? c.parts).push(box(w, h, d, x, y, z, col)); };
+/** Ломаемый предмет: собирается в отдельный меш, медведи могут его разнести. */
+const startProp = (c: Ctx) => { c.cur = []; };
+function endProp(c: Ctx, x: number, z: number, hw: number, hd: number, hp: number, color: number): void {
+  const m = new THREE.Mesh(merge(c.cur!), vcMat);
+  c.cur = null;
+  c.group.add(m);
+  c.obstacles.push({ minX: x - hw, maxX: x + hw, minZ: z - hd, maxZ: z + hd, mesh: m, hp, color });
+}
+
+/** Будка-укрытие: стены, дверь (её можно открыть/закрыть/сломать), полупрозрачная крыша. */
+function addHut(c: Ctx, x: number, z: number, fz: number, wall: number, roof: number): void {
+  const T = 0.3, hd = 1.3;
+  P(c, 3.2, 2.2, T, x, 1.1, z - fz * (hd - T / 2), wall); O(c, x, z - fz * (hd - T / 2), 1.6, T / 2);
+  P(c, T, 2.2, 2.6, x - 1.45, 1.1, z, wall); O(c, x - 1.45, z, T / 2, 1.3);
+  P(c, T, 2.2, 2.6, x + 1.45, 1.1, z, wall); O(c, x + 1.45, z, T / 2, 1.3);
+  const fzp = z + fz * (hd - T / 2);
+  P(c, 1.05, 2.2, T, x - 1.075, 1.1, fzp, wall); O(c, x - 1.075, fzp, 0.525, T / 2);
+  P(c, 1.05, 2.2, T, x + 1.075, 1.1, fzp, wall); O(c, x + 1.075, fzp, 0.525, T / 2);
+  P(c, 1.1, 0.5, T, x, 1.95, fzp, wall);
+  const rm = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.2, 3.0), new THREE.MeshLambertMaterial({ color: roof, transparent: true, opacity: 0.5 }));
+  rm.position.set(x, 2.3, z); c.group.add(rm);
+  const dm = new THREE.Mesh(merge([box(1.1, 1.9, 0.14, 0, 0.95, 0, 0x7a4a2a), box(0.12, 0.12, 0.18, 0.35, 0.95, 0, 0xffd24a)]), vcMat);
+  dm.position.set(x, 0, fzp); c.group.add(dm);
+  const door: AABB = { minX: x - 0.55, maxX: x + 0.55, minZ: fzp - 0.15, maxZ: fzp + 0.15, mesh: dm, hp: 90, color: 0x7a4a2a };
+  c.obstacles.push(door);
+  const sh: Shelter = {
+    x, z, fz, door, doorMesh: dm,
+    slots: [{ x: x - 0.8, z: z - fz * 0.55, occ: 0 }, { x: x + 0.8, z: z - fz * 0.55, occ: 0 }, { x: x - 0.8, z: z + fz * 0.15, occ: 0 }, { x: x + 0.8, z: z + fz * 0.15, occ: 0 }],
+    outPt: { x, z: z + fz * (hd + 0.9) }, inPt: { x, z: z + fz * (hd - 0.65) },
+    open: false, locked: false, broken: false, pending: 0,
+  };
+  door.shelter = sh;
+  c.shelters.push(sh);
+}
 const O = (c: Ctx, x: number, z: number, hw: number, hd: number) => { c.obstacles.push({ minX: x - hw, maxX: x + hw, minZ: z - hd, maxZ: z + hd }); };
 
 function colored(g: Geo, color: number): Geo {
@@ -112,7 +165,7 @@ function finish(c: Ctx): Level {
   c.group.add(mesh);
   const anims = c.anims;
   return {
-    obstacles: c.obstacles, spawns: c.spawns, group: c.group, saws: c.saws,
+    obstacles: c.obstacles, spawns: c.spawns, group: c.group, saws: c.saws, shelters: c.shelters, npcs: c.npcs, outfit: c.outfit,
     anim: anims.length ? (t: number) => { for (const f of anims) f(t); } : null,
     dispose() {
       c.scene.remove(c.group);
@@ -141,16 +194,19 @@ function buildCanteen(scene: THREE.Scene): Level {
   const trayCols = [0x3b6ea5, 0xb04a3a, 0x3b9a6a];
   for (const z of [-9, -3, 3, 9]) for (const s of [-1, 1]) {
     const x = s * 3.5;
+    startProp(c);
     P(c, 3.0, 0.12, 1.4, x, 0.84, z, 0xc8a26a); P(c, 3.1, 0.04, 1.5, x, 0.76, z, 0x8a6a3a);
     for (const lx of [-1.3, 1.3]) for (const lz of [-0.55, 0.55]) P(c, 0.12, 0.8, 0.12, x + lx, 0.4, z + lz, 0x4a3a28);
     for (let k = 0; k < 3; k++) {
       const tx = x - 1.0 + k, tz = z + (k % 2 ? 0.2 : -0.2);
       P(c, 0.55, 0.04, 0.4, tx, 0.92, tz, trayCols[(k + (z > 0 ? 1 : 0)) % 3]); P(c, 0.2, 0.07, 0.2, tx - 0.1, 0.97, tz, 0x8a4b2a); P(c, 0.18, 0.08, 0.18, tx + 0.14, 0.98, tz, 0xc0392b);
     }
-    O(c, x, z, 1.55, 0.75);
+    endProp(c, x, z, 1.55, 0.75, 70, 0xc8a26a);
   }
   for (const [x, z] of [[-5.4, -12.2], [5.2, -6.4], [-1.2, 5.8], [1.6, -11], [-5.5, 12.4], [4.9, 11.9], [0.2, 0.4], [-0.8, -6.2]]) { P(c, 0.5, 0.1, 0.5, x, 0.2, z, 0x7a4a2a); P(c, 0.5, 0.5, 0.08, x, 0.45, z - 0.25, 0x7a4a2a); }
   for (const z of [-6, 6]) { P(c, 0.8, 3.0, 0.8, 0, 1.5, z, 0xeee6cc); P(c, 0.84, 0.5, 0.84, 0, 0.25, z, 0x3f7a5a); O(c, 0, z, 0.5, 0.5); }
+  c.outfit = 'civil';
+  c.npcs.push({ x: -1.1, z: -7.5, kind: 'coward' }, { x: 1.2, z: -1.0, kind: 'brave' }, { x: -1.0, z: 3.8, kind: 'coward' }, { x: 1.0, z: -11.5, kind: 'helper' });
   signAt(c, 'СТОЛОВАЯ №7\nОБЕД 12:00–15:00', 5, 1.3, '#f4efe0', '#8b1d1d', 0, 2.5, -hz + 0.12, 0);
   signAt(c, 'МЕДВЕДЕЙ\nНЕ КОРМИТЬ!', 3.2, 1.2, '#ffe14a', '#222222', -hx + 0.08, 2.4, -3, Math.PI / 2);
   signAt(c, 'КОМПОТ — 15₽\nДОБАВКА — НЕТ', 3.2, 1.2, '#f4efe0', '#1f4f8f', hx - 0.08, 2.4, 3, -Math.PI / 2, 32);
@@ -180,12 +236,16 @@ function buildBarrack(scene: THREE.Scene): Level {
   };
   for (const z of [-12.5, -8.5, -4.5, -0.5, 3.5]) bunk(-5.3, z);
   for (const z of [-10.5, -6.5, -2.5, 1.5, 5.5]) bunk(5.3, z);
+  startProp(c);
   P(c, 1.2, 0.1, 5, 0, 0.8, -8, 0x8a6a40); P(c, 0.4, 0.08, 5, -1.0, 0.45, -8, 0x6a4a2a); P(c, 0.4, 0.08, 5, 1.0, 0.45, -8, 0x6a4a2a);
   for (const z of [-10, -6]) for (const x of [-0.5, 0.5]) P(c, 0.1, 0.8, 0.1, x, 0.4, z, 0x3a2a1a);
   P(c, 0.3, 0.2, 0.3, 0, 0.95, -9, 0xcccccc); P(c, 0.3, 0.2, 0.3, 0.2, 0.95, -7, 0x3b6ea5);
-  O(c, 0, -8, 1.3, 2.6);
+  endProp(c, 0, -8, 1.3, 2.6, 120, 0x8a6a40);
   P(c, 1.0, 1.2, 1.0, 0, 0.6, 1.5, 0x2a2a2a); P(c, 0.25, 2.2, 0.25, 0, 2.3, 1.5, 0x3a3a3a); P(c, 0.5, 0.35, 0.05, 0, 0.5, 2.02, 0xff7a20);
   O(c, 0, 1.5, 0.75, 0.75);
+  addHut(c, 3.0, 10.8, -1, 0x6a4c2e, 0x4a331c);
+  c.outfit = 'convict';
+  c.npcs.push({ x: -2.2, z: -2, kind: 'coward' }, { x: 2.3, z: -4, kind: 'brave' }, { x: -2.2, z: 6.8, kind: 'coward' }, { x: 1.8, z: 3.2, kind: 'helper' });
   signAt(c, 'ТРУД ОБЛАГОРАЖИВАЕТ\nОТБОЙ В 22:00', 5, 1.3, '#e8dcc0', '#7a1a1a', 0, 2.5, -hz + 0.12, 0, 30);
   signAt(c, 'ПОРЯДОК\nИ ЧИСТОТА', 3.2, 1.2, '#e8dcc0', '#1f3f6f', -hx + 0.08, 2.4, 8, Math.PI / 2);
   signAt(c, 'НЕ КУРИТЬ!\nМЕДВЕДИ НЕ ПРОЙДУТ', 3.6, 1.2, '#ffe14a', '#222', 0, 2.5, hz - 0.12, Math.PI, 28);
@@ -227,16 +287,21 @@ function buildVillage(scene: THREE.Scene): Level {
   P(c, 1.4, 1.6, 0.06, sx, 0.85, sz + 1.22, 0x16100a); P(c, 0.1, 1.7, 0.1, sx - 0.75, 0.85, sz + 1.25, 0x5a3a20); P(c, 0.1, 1.7, 0.1, sx + 0.75, 0.85, sz + 1.25, 0x5a3a20);
   O(c, sx, sz, 1.5, 1.2);
   // дрова, колодец, снеговик
+  startProp(c);
   for (let i = 0; i < 3; i++) P(c, 1.6, 0.34, 1.0, -4.6, 0.17 + i * 0.34, 2.5, i % 2 ? 0x9a6a3a : 0x7a4a24);
   P(c, 1.7, 0.08, 1.1, -4.6, 1.06, 2.5, 0xeef4fc);
-  O(c, -4.6, 2.5, 0.85, 0.55);
+  endProp(c, -4.6, 2.5, 0.85, 0.55, 45, 0x9a6a3a);
   P(c, 1.0, 0.7, 1.0, 0.2, 0.35, 4.2, 0x7a7a80); P(c, 0.8, 0.12, 0.8, 0.2, 0.72, 4.2, 0x2a4a7a);
   P(c, 0.1, 1.5, 0.1, -0.2, 1.2, 4.2, 0x5a3a20); P(c, 0.1, 1.5, 0.1, 0.6, 1.2, 4.2, 0x5a3a20); P(c, 1.3, 0.12, 1.1, 0.2, 2.0, 4.2, 0x5a3a20); P(c, 1.4, 0.1, 1.2, 0.2, 2.1, 4.2, 0xeef4fc);
   O(c, 0.2, 4.2, 0.6, 0.6);
+  startProp(c);
   P(c, 0.9, 0.9, 0.9, 4.4, 0.45, 9.2, 0xffffff); P(c, 0.7, 0.7, 0.7, 4.4, 1.25, 9.2, 0xffffff); P(c, 0.5, 0.5, 0.5, 4.4, 1.85, 9.2, 0xffffff);
   P(c, 0.4, 0.3, 0.4, 4.4, 2.2, 9.2, 0x222222); P(c, 0.1, 0.1, 0.4, 4.4, 1.85, 9.5, 0xff7a20); P(c, 0.08, 0.08, 0.02, 4.3, 1.95, 9.46, 0x111111); P(c, 0.08, 0.08, 0.02, 4.5, 1.95, 9.46, 0x111111);
-  O(c, 4.4, 9.2, 0.5, 0.5);
-  for (const [x, z, w] of [[5.3, 12.8, 2.2], [-5.2, -5.6, 1.8], [-5.0, 10.8, 2.0]]) P(c, w, 0.28, 1.1, x, 0.14, z, 0xf6faff);
+  endProp(c, 4.4, 9.2, 0.5, 0.5, 30, 0xffffff);
+  for (const [x, z, w] of [[5.3, 12.8, 2.2], [-5.2, -5.6, 1.8]]) P(c, w, 0.28, 1.1, x, 0.14, z, 0xf6faff);
+  addHut(c, -3.8, 9.4, -1, 0x7a5a38, 0xeef4fc);
+  c.outfit = 'village';
+  c.npcs.push({ x: -1.6, z: -6.5, kind: 'coward' }, { x: 2.0, z: 0.5, kind: 'brave' }, { x: -2.6, z: 3.0, kind: 'coward' });
   signAt(c, 'д. ПОТАПОВО\nнас. 12 чел. · медведей 400', 4.6, 1.2, '#3a6a9a', '#fff', 2.6, 1.7, -hz + 0.2, 0, 28);
   sideSpawns(c);
   return finish(c);
@@ -253,11 +318,12 @@ function buildSawmill(scene: THREE.Scene): Level {
   windows(c, [-9, 3], 0xffe9a0, 0x3a3a3a);
   doors(c, 0x3a4a3a);
   const logPile = (x: number, z: number, w: number, d: number) => {
+    startProp(c);
     for (let i = 0; i < 3; i++) P(c, w - i * 0.3, 0.45, d, x, 0.22 + i * 0.45, z, [0x8a5a30, 0x7a4a28, 0x9a6a38][i]);
-    O(c, x, z, w / 2, d / 2);
+    endProp(c, x, z, w / 2, d / 2, 80, 0x8a5a30);
   };
   logPile(-3.6, -11.2, 3.2, 1.8); logPile(4.0, -10.6, 3.0, 1.8); logPile(-3.8, 10.6, 3.0, 1.8);
-  for (const [x, z] of [[-4.5, 1.6], [4.6, 2.2]]) { for (let i = 0; i < 5; i++) P(c, 1.8, 0.16, 1.1, x, 0.1 + i * 0.17, z, i % 2 ? 0xd8b878 : 0xc8a868); O(c, x, z, 0.95, 0.6); }
+  for (const [x, z] of [[-4.5, 1.9], [4.6, -0.8]]) { startProp(c); for (let i = 0; i < 5; i++) P(c, 1.8, 0.16, 1.1, x, 0.1 + i * 0.17, z, i % 2 ? 0xd8b878 : 0xc8a868); endProp(c, x, z, 0.95, 0.6, 40, 0xd8b878); }
   // пильный стол
   P(c, 2.8, 0.9, 1.6, 0, 0.45, -2.5, 0x6a4a2a); P(c, 3.0, 0.1, 1.8, 0, 0.95, -2.5, 0x8a8a90); P(c, 0.1, 1.0, 1.0, 0, 1.45, -2.5, 0xc8d0d8); P(c, 0.5, 0.5, 0.5, 0, 1.15, -2.5, 0xe05a1a);
   O(c, 0, -2.5, 1.5, 0.9);
@@ -277,25 +343,10 @@ function buildSawmill(scene: THREE.Scene): Level {
     c.saws.push({ mesh: m, x: dir * 3, z, r: 0.85, dir, speed, range: hx - 1.1 });
   };
   mkSaw(-6, 1, 3.4); mkSaw(6, -1, 2.8);
-  // зэки
-  const convs: { rig: Rig; ph: number }[] = [];
-  [[-5.65, -8.6], [5.65, -4.6], [-5.65, 8.0], [5.65, 8.6], [-5.65, 13.4]].forEach(([x, z], i) => {
-    const rig = buildHuman(CONVICT);
-    rig.root.position.set(x, 0, z);
-    rig.root.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2;
-    c.group.add(rig.root);
-    P(c, 0.5, 0.45, 0.5, x + (x < 0 ? 0.55 : -0.55), 0.22, z, 0x8a5a30);
-    O(c, x, z, 0.45, 0.45);
-    convs.push({ rig, ph: i * 1.3 });
-  });
-  c.anims.push(t => {
-    for (const k of convs) {
-      animateRig(k.rig, 0, 0, true, false);
-      k.rig.armR.rotation.x = -1.6 + Math.sin(t * 6 + k.ph) * 0.9;
-      k.rig.armL.rotation.x = -1.4 + Math.sin(t * 6 + k.ph + 0.3) * 0.7;
-      k.rig.root.position.y = Math.abs(Math.sin(t * 3 + k.ph)) * 0.04;
-    }
-  });
+  addHut(c, -4.3, -3.2, 1, 0x58666f, 0x3a4650);
+  addHut(c, 4.4, 3.6, -1, 0x58666f, 0x3a4650);
+  c.outfit = 'convict';
+  c.npcs.push({ x: -5.4, z: -8.6, kind: 'coward' }, { x: 5.3, z: -8.0, kind: 'brave' }, { x: -1.6, z: 3.5, kind: 'coward' }, { x: 1.6, z: 8.6, kind: 'helper' }, { x: -5.4, z: 8.0, kind: 'coward' });
   signAt(c, 'ЛЕСОЗАГОТОВКА №5\nРЕЖИМНЫЙ ОБЪЕКТ', 5, 1.3, '#f4efe0', '#222', 0, 2.5, -hz + 0.12, 0, 30);
   signAt(c, 'ПРОХОД\nВОСПРЕЩЁН', 3.2, 1.2, '#e03a2a', '#fff', -hx + 0.08, 2.4, -2, Math.PI / 2);
   signAt(c, 'ПИЛЫ ЕДУТ —\nНЕ ЗЕВАЙ!', 3.4, 1.2, '#ffe14a', '#222', hx - 0.08, 2.4, 0, -Math.PI / 2, 32);
@@ -320,7 +371,7 @@ function buildBanya(scene: THREE.Scene): Level {
   P(c, 0.25, 2.6, 0.25, 4.7, 2.2, -8.6, 0x3a3a3a); P(c, 0.5, 0.5, 0.06, 4.2, 0.4, -7.18, 0xff7a20);
   O(c, 4.2, -8, 0.85, 0.85);
   // бочки, лавки, купель
-  for (const [x, z] of [[-4.4, -7], [-4.4, -5.6]]) { P(c, 1.0, 1.1, 1.0, x, 0.55, z, 0x8a5a30); P(c, 1.04, 0.1, 1.04, x, 0.3, z, 0x3a3a3a); P(c, 1.04, 0.1, 1.04, x, 0.85, z, 0x3a3a3a); P(c, 0.85, 0.05, 0.85, x, 1.12, z, 0x3b7ab0); O(c, x, z, 0.55, 0.55); }
+  for (const [x, z] of [[-4.4, -7], [-4.4, -5.6]]) { startProp(c); P(c, 1.0, 1.1, 1.0, x, 0.55, z, 0x8a5a30); P(c, 1.04, 0.1, 1.04, x, 0.3, z, 0x3a3a3a); P(c, 1.04, 0.1, 1.04, x, 0.85, z, 0x3a3a3a); P(c, 0.85, 0.05, 0.85, x, 1.12, z, 0x3b7ab0); endProp(c, x, z, 0.55, 0.55, 35, 0x8a5a30); }
   for (const [x, z] of [[-3.5, -0.5], [3.4, 3.4]]) { P(c, 3.0, 0.14, 0.8, x, 0.55, z, 0xd8aa68); for (const lx of [-1.3, 1.3]) P(c, 0.14, 0.55, 0.7, x + lx, 0.28, z, 0x8a5a30); O(c, x, z, 1.5, 0.45); }
   P(c, 2.6, 0.9, 2.6, -4.2, 0.45, 6.6, 0x9a6a38); P(c, 2.2, 0.06, 2.2, -4.2, 0.92, 6.6, 0x4a9ae0);
   O(c, -4.2, 6.6, 1.3, 1.3);
@@ -334,6 +385,8 @@ function buildBanya(scene: THREE.Scene): Level {
     c.group.add(m); steams.push(m);
   }
   c.anims.push(t => steams.forEach((m, i) => { m.position.x = Math.sin(t * 0.3 + i * 1.7) * 2.2; (m.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.05 * Math.sin(t * 0.8 + i); }));
+  c.outfit = 'civil';
+  c.npcs.push({ x: 1.5, z: -3, kind: 'coward' }, { x: -1.6, z: 3, kind: 'brave' }, { x: 1.2, z: 9.8, kind: 'coward' });
   signAt(c, 'ЛЁГКОГО ПАРА!\nСПИРТНОЕ НЕ ПРОНОСИТЬ', 5, 1.3, '#f0e0b8', '#7a1a1a', 0, 2.5, -hz + 0.12, 0, 28);
   signAt(c, 'ВЕНИК — 50₽\nМЕДВЕДЮ — БЕСПЛАТНО', 3.4, 1.2, '#f0e0b8', '#2a5a2a', hx - 0.08, 2.4, 4, -Math.PI / 2, 26);
   sideSpawns(c);
@@ -358,16 +411,21 @@ function buildPodezd(scene: THREE.Scene): Level {
   // батареи под окнами
   for (const z of [-10, 2, 11]) for (const s of [-1, 1]) P(c, 0.2, 0.6, 1.2, s * (hx - 0.12), 0.5, z, 0xf0f0f0);
   // препятствия: велосипед, коляска, мусорка, колонны, лавочка
+  startProp(c);
   P(c, 1.9, 0.08, 0.1, -4.6, 0.5, -7.5, 0x2a2a2a); P(c, 0.1, 0.5, 0.1, -3.7, 0.45, -7.5, 0xc03a2a); P(c, 0.6, 0.6, 0.06, -5.2, 0.4, -7.5, 0x1a1a1a); P(c, 0.6, 0.6, 0.06, -4.0, 0.4, -7.5, 0x1a1a1a); P(c, 0.5, 0.08, 0.1, -5.2, 0.9, -7.5, 0x2a2a2a);
-  O(c, -4.6, -7.5, 1.0, 0.45);
+  endProp(c, -4.6, -7.5, 1.0, 0.45, 30, 0xc03a2a);
+  startProp(c);
   P(c, 0.9, 0.4, 1.4, 4.5, 0.6, -5.4, 0x3a5a8a); P(c, 0.9, 0.6, 0.1, 4.5, 1.0, -4.7, 0x3a5a8a); P(c, 0.8, 0.1, 0.1, 4.5, 1.35, -4.7, 0x222222);
   for (const lz of [-5.9, -4.9]) for (const lx of [4.1, 4.9]) P(c, 0.28, 0.28, 0.1, lx, 0.15, lz, 0x111111);
-  O(c, 4.5, -5.4, 0.55, 0.85);
+  endProp(c, 4.5, -5.4, 0.55, 0.85, 30, 0x3a5a8a);
+  startProp(c);
   for (const [x, z] of [[4.8, 6.4], [5.4, 7.2]]) { P(c, 0.9, 1.0, 0.9, x, 0.5, z, 0x3a6a3a); P(c, 0.95, 0.1, 0.95, x, 1.02, z, 0x1a3a1a); }
-  O(c, 5.1, 6.8, 0.9, 0.9);
+  endProp(c, 5.1, 6.8, 0.9, 0.9, 40, 0x3a6a3a);
   for (const z of [-3, 4]) for (const x of [-2.4, 2.4]) { P(c, 0.9, 3.0, 0.9, x, 1.5, z, 0xd0ccbc); P(c, 0.94, 0.5, 0.94, x, 0.25, z, 0x4a8a7a); O(c, x, z, 0.55, 0.55); }
   P(c, 1.6, 0.1, 0.5, -4.8, 0.5, 6.0, 0x7a4a2a); P(c, 1.6, 0.4, 0.08, -4.8, 0.8, 5.8, 0x7a4a2a); P(c, 0.1, 0.5, 0.4, -5.5, 0.25, 6.0, 0x3a3a3a); P(c, 0.1, 0.5, 0.4, -4.1, 0.25, 6.0, 0x3a3a3a);
   O(c, -4.8, 6.0, 0.85, 0.3);
+  c.outfit = 'village';
+  c.npcs.push({ x: -0.2, z: -8.5, kind: 'coward' }, { x: 1.0, z: 1.0, kind: 'brave' }, { x: -1.0, z: 9.0, kind: 'coward' });
   signAt(c, 'ЛИФТ НЕ РАБОТАЕТ\nС 1997 ГОДА', 4, 1.2, '#f4efe0', '#8b1d1d', 3.9, 2.7, -hz + 0.12, 0, 28);
   signAt(c, 'КУРИТЬ В ПОДЪЕЗДЕ\nЗАПРЕЩЕНО! (МЕДВЕДЯМ ТОЖЕ)', 5, 1.2, '#ffe14a', '#222', 0, 2.5, hz - 0.12, Math.PI, 24);
   signAt(c, 'ДОМОФОН\nкод: 1234', 2.8, 1.1, '#2a2a30', '#ffd24a', hx - 0.08, 2.2, 8, -Math.PI / 2, 28);
@@ -387,17 +445,20 @@ export function buildLocation(id: string, scene: THREE.Scene): Level {
 }
 
 /** Выталкивает окружность из прямоугольников и арены. Возвращает скорректированную точку. */
-export function resolveCircle(x: number, z: number, r: number, obs: AABB[], out: { x: number; z: number }): void {
+export function resolveCircle(x: number, z: number, r: number, obs: AABB[], out: { x: number; z: number }): AABB | null {
+  let hit: AABB | null = null;
   const lx = ARENA.hx - r, lz = ARENA.hz - r;
   if (x < -lx) x = -lx; else if (x > lx) x = lx;
   if (z < -lz) z = -lz; else if (z > lz) z = lz;
   for (let i = 0; i < obs.length; i++) {
     const o = obs[i];
+    if (o.off) continue;
     const cx = x < o.minX ? o.minX : x > o.maxX ? o.maxX : x;
     const cz = z < o.minZ ? o.minZ : z > o.maxZ ? o.maxZ : z;
     const dx = x - cx, dz = z - cz;
     const d2 = dx * dx + dz * dz;
     if (d2 < r * r) {
+      hit = o;
       if (d2 > 1e-8) {
         const d = Math.sqrt(d2);
         x = cx + (dx / d) * r; z = cz + (dz / d) * r;
@@ -408,5 +469,8 @@ export function resolveCircle(x: number, z: number, r: number, obs: AABB[], out:
       }
     }
   }
+  if (x < -lx) x = -lx; else if (x > lx) x = lx;
+  if (z < -lz) z = -lz; else if (z > lz) z = lz;
   out.x = x; out.z = z;
+  return hit;
 }

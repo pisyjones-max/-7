@@ -25,13 +25,14 @@ export interface SaveData {
   camMode: 'top' | 'chase';
   loc: string;
   locUnlocked: string[];
+  bestWave: number;
 }
 
 const KEY = 'medvedokalipsis_save_v1';
 
 const DEFAULT: SaveData = {
   coins: 0, best: 0, unlocked: ['vasya'], selected: 'vasya', scores: [], streak: 0, lastDaily: '',
-  kills: 0, runs: 0, muted: false, nick: 'Аноним', mutator: false, tutorialSeen: false, camMode: 'top', loc: 'canteen', locUnlocked: ['canteen'],
+  kills: 0, runs: 0, muted: false, nick: 'Аноним', mutator: false, tutorialSeen: false, camMode: 'top', loc: 'canteen', locUnlocked: ['canteen'], bestWave: 0,
 };
 
 function load(): SaveData {

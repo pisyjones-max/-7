@@ -1,23 +1,24 @@
 import * as THREE from 'three';
 import {
   CHARS, CRATE_WEAPONS, DEATH_JOKES, ENEMIES, EVENTS, HURT_QUIPS, KILL_STREAK, BEAR_QUIPS, PLAYER_QUIPS, RANKS,
-  UPGRADES, WAVE_SUBS, WEAPONS, pick, todayMutator,
+  UPGRADES, WAVE_SUBS, WEAPONS, pick, todayMutator, continuesFor, NPC_SHOUTS, NPC_BRAVE,
   type CharDef, type EnemyDef, type EnemyKind, type Mutator, type Stats, type UpgradeDef, type WeaponDef,
 } from './data';
 import { animateBear, animateRig, box, buildBear, buildHuman, flashMat, merge, setFlash, vcMat, warnMat, type Rig } from './models';
-import { ARENA, LOCATIONS, buildLocation, resolveCircle, type Level, type LocDef } from './level';
+import { ARENA, LOCATIONS, buildLocation, resolveCircle, type AABB, type Level, type LocDef, type NpcKind, type Shelter } from './level';
 import type { Input } from './input';
 import { audio } from './audio';
 import { save, commit } from './save';
 
 export interface HudState {
   hp: number; maxHp: number; xp: number; xpNext: number; lvl: number; wave: number; score: number; coins: number;
-  points: number; bombFrac: number; weaponIcon: string; weaponName: string; weaponFrac: number; combo: number; mult: number; left: number;
+  continues: number; items: Record<ItemKind, number>; itemCd: number; points: number; bombFrac: number; weaponIcon: string; weaponName: string; weaponFrac: number; combo: number; mult: number; left: number;
 }
 export interface RunResult {
   score: number; wave: number; kills: number; coins: number; lvl: number; title: string; rank: string; joke: string; loc: string; newBest: boolean; time: number;
 }
 export interface GameEvents {
+  continuePrompt(left: number, wave: number): void;
   finish(on: boolean): void;
   hud(s: HudState): void;
   quip(text: string, who: 'p' | 'b' | 'sys'): void;
@@ -29,19 +30,47 @@ export interface GameEvents {
   hurt(): void;
 }
 
-type Mode = 'menu' | 'play' | 'choose' | 'paused' | 'dying' | 'over';
+type Mode = 'menu' | 'play' | 'choose' | 'paused' | 'dying' | 'over' | 'continue';
 
 interface Enemy {
   def: EnemyDef; rig: Rig; x: number; z: number; vx: number; vz: number; hp: number; maxHp: number; r: number;
   spd: number; dmg: number; flash: number; atkCd: number; t: number; face: number; stun: number; slow: number;
   shootCd: number; side: number; dead: boolean; deadT: number; fvx: number; fvz: number; fy: number; fvy: number;
+  tkind: 'player' | 'npc' | 'lure' | 'wander' | 'door'; tnpc: Npc | null; tx: number; tz: number; retarget: number; lureT: number; lureX: number; lureZ: number;
+  aggro: Npc | null; aggroT: number; blockT: number; detourT: number; detourSign: number; wAng: number; netT: number;
   fin: number; finT: number; sawCd: number; lunge: number; lungeCd: number; enraged: boolean; rear: number; rearT: number; rearCd: number;
   bState: 'chase' | 'wind' | 'charge' | 'rest'; bT: number; bCd: number; cx: number; cz: number; sum1: boolean; sum2: boolean; ring: number;
 }
-interface Proj { x: number; z: number; vx: number; vz: number; life: number; dmg: number; pierce: number; w: WeaponDef; hit: Enemy[]; crit: boolean; ang: number }
+type NpcState = 'work' | 'flee' | 'toShelter' | 'hidden' | 'return' | 'fight' | 'follow' | 'down' | 'dead';
+interface Npc {
+  id: number; rig: Rig; kind: NpcKind; color: number; x: number; z: number; hx: number; hz: number; r: number; hp: number; maxHp: number;
+  state: NpcState; fear: number; t: number; face: number; flash: number; downT: number; yellCd: number; throwCd: number; warnT: number;
+  stuckT: number; detourT: number; detourSign: number; px: number; pz: number; shelter: Shelter | null; slot: number; stage: number;
+  calmT: number; coverT: number; cx: number; cz: number; hasCover: boolean; leaving: Shelter | null; invuln: number; mv: number; throwAnim: number;
+}
+type ItemKind = 'frag' | 'smoke' | 'decoy' | 'net';
+const ITEM_KINDS: ItemKind[] = ['frag', 'smoke', 'decoy', 'net'];
+const ITEM_INFO: Record<ItemKind, { icon: string; name: string; quip: string }> = {
+  frag: { icon: '💣', name: 'Граната', quip: 'Граната! Всем лечь!' },
+  smoke: { icon: '🌫️', name: 'Дымовая', quip: 'Дымовуха! Ничего не видно!' },
+  decoy: { icon: '📻', name: 'Приманка', quip: 'Баян на всю катушку!' },
+  net: { icon: '🕸️', name: 'Сеть', quip: 'Лови сеть, косолапый!' },
+};
+const ITEM_CAP = 8, ITEM_MAX = 4;
+interface Grenade { kind: ItemKind; x0: number; z0: number; x1: number; z1: number; x: number; z: number; t: number; dur: number; landed: boolean; ttl: number; mesh: THREE.Mesh; bark: number }
+interface Smoke { x: number; z: number; r: number; t: number; puff: number }
+const NPC_THROW: WeaponDef = { id: 'npcThrow', name: 'Бросок', icon: '🪨', rate: 1, dmg: 6, speed: 11, life: 1.1, pellets: 1, spread: 0, jitter: 0, pierce: 0, knock: 2, size: 0.3, color: 0xcaa070, explode: 0, sfx: 'shoot', quip: '' };
+function npcDef(outfit: string, kind: NpcKind): CharDef {
+  const base = { name: '', emoji: '', desc: '', cost: 0, skin: 0xe8c09a, hp: 1, speed: 1, rate: 1, dmg: 1, hitR: 0.4 };
+  const shirt = { coward: 0x4a4e54, brave: 0x8a2a2a, helper: 0x2a7a4a }[kind];
+  if (outfit === 'convict') return { ...base, id: 'npc_convict_' + kind, shirt, pants: 0x34383e, hat: 'kepka', stripes: 'tel' };
+  if (outfit === 'village') return { ...base, id: 'npc_village_' + kind, shirt: kind === 'coward' ? 0x8a3b9a : kind === 'brave' ? 0xb05a2a : 0x3a6aa0, pants: 0x4a3a2a, hat: kind === 'coward' ? 'platok' : 'ushanka', stripes: 'none' };
+  return { ...base, id: 'npc_civil_' + kind, shirt: kind === 'coward' ? 0x7a8a5a : kind === 'brave' ? 0xb05a2a : 0x3a6aa0, pants: 0x3a3a48, hat: kind === 'coward' ? 'panama' : 'kepka', stripes: 'none' };
+}
+interface Proj { owner: Npc | null; x: number; z: number; vx: number; vz: number; life: number; dmg: number; pierce: number; w: WeaponDef; hit: Enemy[]; crit: boolean; ang: number }
 interface EShot { x: number; z: number; vx: number; vz: number; life: number; dmg: number; kind: EnemyKind }
 type Killer = EnemyKind | 'saw';
-interface Pickup { kind: 'coin' | 'xp' | 'pie' | 'crate'; x: number; z: number; t: number; val: number }
+interface Pickup { kind: 'coin' | 'xp' | 'pie' | 'crate' | 'ammo'; x: number; z: number; t: number; val: number }
 interface Particle { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; size: number; spin: number; color: THREE.Color; grav: number }
 interface Puddle { x: number; z: number; r: number; t: number; tick: number; mesh: THREE.Mesh; dmg: number }
 
@@ -126,6 +155,22 @@ export class Game {
   private finTarget: Enemy | null = null;
   private fin: { e: Enemy; t: number; type: number; started: boolean; done: boolean } | null = null;
   private finKill = false;
+  private npcs: Npc[] = [];
+  private npcSeq = 1;
+  npcLost = 0;
+  private items: Record<ItemKind, number> = { frag: 2, smoke: 1, decoy: 1, net: 1 };
+  private itemCd = 0;
+  private grenades: Grenade[] = [];
+  private gPool: THREE.Mesh[] = [];
+  private gMats: Record<ItemKind, THREE.MeshLambertMaterial> = {
+    frag: new THREE.MeshLambertMaterial({ color: 0x4a6a2a }), smoke: new THREE.MeshLambertMaterial({ color: 0x9a9aa4 }),
+    decoy: new THREE.MeshLambertMaterial({ color: 0xb050d0 }), net: new THREE.MeshLambertMaterial({ color: 0xd8c890 }),
+  };
+  private smokes: Smoke[] = [];
+  private netMeshes: { mesh: THREE.Mesh; e: Enemy | null }[] = [];
+  private continuesLeft = 0;
+  private finished = false;
+  private lockT = 0;
   private deathT = 0;
   private result: RunResult | null = null;
 
@@ -149,8 +194,8 @@ export class Game {
   private perfDrops = 0;
   private projV = new THREE.Vector3();
 
-  constructor(private canvas: HTMLCanvasElement, private input: Input) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  constructor(private canvas: HTMLCanvasElement, private input: Input, renderer?: THREE.WebGLRenderer) {
+    this.renderer = renderer ?? new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setClearColor(0x1a1020);
     this.scene.background = new THREE.Color(0x1a1020);
     this.sun.position.set(6, 14, 8);
@@ -176,6 +221,11 @@ export class Game {
     this.ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffc040, transparent: true, opacity: 0.8, depthWrite: false }));
     this.ringMesh.visible = false;
     this.scene.add(this.ringMesh);
+    const gGeo = new THREE.BoxGeometry(0.4, 0.45, 0.4);
+    for (let i = 0; i < 8; i++) { const m = new THREE.Mesh(gGeo, this.gMats.frag); m.visible = false; this.scene.add(m); this.gPool.push(m); }
+    const netGeo = new THREE.BoxGeometry(1, 1, 1, 3, 3, 3);
+    const netMat = new THREE.MeshBasicMaterial({ color: 0xe8e0a0, wireframe: true, transparent: true, opacity: 0.8 });
+    for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(netGeo, netMat); m.visible = false; this.scene.add(m); this.netMeshes.push({ mesh: m, e: null }); }
 
     for (let i = 0; i < MAX_PART; i++) this.parts.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, size: 0.1, spin: 0, color: new THREE.Color(), grav: 18 });
     for (let i = 0; i < 5; i++) {
@@ -259,6 +309,7 @@ export class Game {
 
   showMenu(): void {
     this.clearWorld();
+    this.rebuildLevel();
     this.mode = 'menu';
     this.applyCam();
     this.input.setEnabled(false);
@@ -306,14 +357,27 @@ export class Game {
     for (const q of this.parts) q.life = 0;
     this.puddles.forEach(p => { p.t = 0; p.mesh.visible = false; });
     this.bombActive = false; this.bombMesh.visible = false; this.warnLine.visible = false; this.ringMesh.visible = false;
+    for (const n of this.npcs) this.scene.remove(n.rig.root);
+    this.npcs = []; this.grenades = []; this.smokes = [];
+    this.gPool.forEach(m => (m.visible = false));
+    this.netMeshes.forEach(s => { s.e = null; s.mesh.visible = false; });
     this.bossRef = null; this.finTarget = null; this.fin = null;
     this.events?.finish(false);
     this.projMesh.count = this.eshotMesh.count = this.pickMesh.count = this.partMesh.count = 0;
     this.menuProps.forEach(r => (r.root.visible = false));
   }
 
+  private rebuildLevel(): void {
+    this.level.dispose();
+    this.level = buildLocation(this.locDef.id, this.scene);
+  }
+
   start(): void {
     this.clearWorld();
+    this.rebuildLevel();
+    this.spawnNpcs();
+    this.items = { frag: 2, smoke: 1, decoy: 1, net: 1 }; this.itemCd = 0;
+    this.continuesLeft = continuesFor(save.bestWave); this.finished = false; this.lockT = 0; this.npcLost = 0;
     audio.init();
     const def = CHARS.find(c => c.id === save.selected) ?? CHARS[0];
     this.charDef = def;
@@ -391,8 +455,13 @@ export class Game {
       this.p.deathTilt = Math.min(1.5, this.p.deathTilt + real * 2.2);
       this.rig.root.rotation.x = -this.p.deathTilt;
       this.rig.root.position.y = Math.min(0.4, this.p.deathTilt * 0.25);
-      if (this.deathT <= 0) this.finish();
+      if (this.deathT <= 0) this.afterDeath();
     }
+    this.updateNpcs(dt);
+    this.updateShelters(dt);
+    this.updateGrenades(dt);
+    this.updateSmokes(dt);
+    this.updateNets(dt);
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
     this.updateEnemyShots(dt);
@@ -480,7 +549,7 @@ export class Game {
       const sp = w.speed * (0.92 + Math.random() * 0.16);
       this.projs.push({
         x: p.x + Math.sin(a) * 0.7, z: p.z + Math.cos(a) * 0.7, vx: Math.sin(a) * sp, vz: Math.cos(a) * sp, life: w.life,
-        dmg: w.dmg * s.dmgMul * (crit ? 2.5 : 1), pierce: w.pierce + s.pierce, w, hit: [], crit, ang: a,
+        dmg: w.dmg * s.dmgMul * (crit ? 2.5 : 1), pierce: w.pierce + s.pierce, w, hit: [], crit, ang: a, owner: null,
       });
     }
     audio.play(w.sfx);
@@ -516,6 +585,8 @@ export class Game {
   }
 
   private finish(): void {
+    if (this.finished) return;
+    this.finished = true;
     const p = this.p;
     this.mode = 'over';
     const mult = this.mods ? 1.5 : 1;
@@ -524,8 +595,9 @@ export class Game {
     const prevBest = save.best;
     save.coins += coins; save.kills += p.kills; save.runs += 1;
     if (p.score > save.best) save.best = p.score;
-    commit();
     const wave = Math.max(1, this.wave);
+    save.bestWave = Math.max(save.bestWave, wave);
+    commit();
     let rank = RANKS[0][1];
     for (const [w, name] of RANKS) if (wave >= w) rank = name;
     this.result = {
@@ -562,6 +634,7 @@ export class Game {
     this.wave++;
     const w = this.wave;
     this.waveState = 'fight';
+    for (const n of this.npcs) if (n.state === 'dead') this.reviveNpc(n);
     this.queue = this.buildQueue(w);
     this.spawnGap = Math.max(0.5, 1.3 - w * 0.05);
     this.spawnT = 0.6;
@@ -576,11 +649,16 @@ export class Game {
     } else {
       this.events.banner('ВОЛНА ' + w, pick(WAVE_SUBS), 'wave');
       if (w >= 2 && Math.random() < 0.5) {
-        const ev = pick(['blackout', 'pirozhki', 'rush'] as const);
+        const evs: (keyof typeof EVENTS)[] = ['blackout', 'pirozhki', 'rush'];
+        if (this.npcs.some(n => n.state !== 'dead')) evs.push('ambush');
+        if (this.level.shelters.length) evs.push('lock');
+        const ev = pick(evs);
         this.event = ev;
         setTimeout(() => this.events.banner(EVENTS[ev].title, EVENTS[ev].sub, 'event'), 1400);
         if (ev === 'blackout') this.setBlackout(true);
         if (ev === 'rush') for (let i = 0; i < 10; i++) this.queue.push('cub');
+        if (ev === 'ambush') this.ambush();
+        if (ev === 'lock') this.lockShelters();
         if (ev === 'pirozhki') for (let i = 0; i < 7; i++) this.addPickup('pie', (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 24, 1);
       }
     }
@@ -593,6 +671,10 @@ export class Game {
     p.score += 100 * this.wave;
     p.runCoins += 3 + this.wave;
     p.hp = Math.min(this.stats.maxHp, p.hp + this.stats.maxHp * 0.15);
+    const aliveNpc = this.npcs.filter(n => n.state !== 'dead').length;
+    if (aliveNpc > 0) { p.runCoins += aliveNpc * 2; p.score += aliveNpc * 25; this.say('Люди благодарят: +' + aliveNpc * 2 + ' монет', 'sys'); }
+    this.unlockShelters();
+    this.giveItem(pick(ITEM_KINDS));
     this.setBlackout(false);
     this.events.banner('ВОЛНА ' + this.wave + ' ЗАЧИЩЕНА', '+' + 100 * this.wave + ' очков', 'info');
     audio.setIntense(false);
@@ -668,7 +750,8 @@ export class Game {
     const e: Enemy = {
       def, rig, x: sx, z: sz, vx: 0, vz: 0, hp, maxHp: hp, r: def.radius * (big ? 1.25 : 1), spd, dmg: def.dmg * (1 + (w - 1) * 0.04),
       flash: 0, atkCd: 0.6, t: Math.random() * 6, face: 0, stun: 0, slow: 0, shootCd: 1 + Math.random() * 1.5, side: Math.random() < 0.5 ? -1 : 1,
-      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, fin: 0, finT: 0, sawCd: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, rear: 0, rearT: 0, rearCd: 2 + Math.random() * 4, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
+      dead: false, deadT: 0, fvx: 0, fvz: 0, fy: 0, fvy: 0, tkind: 'player', tnpc: null, tx: sx, tz: sz, retarget: 0, lureT: 0, lureX: 0, lureZ: 0, aggro: null, aggroT: 0, blockT: 0, detourT: 0, detourSign: 1, wAng: Math.random() * 6, netT: 0,
+      fin: 0, finT: 0, sawCd: 0, lunge: 0, lungeCd: 1 + Math.random() * 2, enraged: false, rear: 0, rearT: 0, rearCd: 2 + Math.random() * 4, bState: 'chase', bT: 0, bCd: 3, cx: 0, cz: 1, sum1: false, sum2: false, ring: 3,
     };
     this.enemies.push(e);
     this.burst(sx, 0.6, sz, 8, [0xd8d0c0, 0xaaa090], 3, 2, 0.2, 0.5, 8);
@@ -706,7 +789,10 @@ export class Game {
         if (e.finT <= 0 && !this.fin) { e.fin = 2; setFlash(e.rig, null); if (this.finTarget === e) { this.finTarget = null; this.events.finish(false); } }
       } e.stun -= dt; e.slow = Math.max(0, e.slow - dt);
       if (e.flash > 0) { e.flash -= dt; if (e.flash <= 0) setFlash(e.rig, null); }
-      const dx = p.x - e.x, dz = p.z - e.z, dist = Math.hypot(dx, dz) || 1e-4;
+      if (e.rearT > 0 && (e.def.boss || e.def.id === 'dog')) e.rearT -= dt;
+      let tx = p.x, tz = p.z;
+      if (!e.def.boss && e.def.id !== 'fisher') { this.updateTarget(e, dt); tx = e.tx; tz = e.tz; }
+      const dx = tx - e.x, dz = tz - e.z, dist = Math.hypot(dx, dz) || 1e-4;
       const nx = dx / dist, nz = dz / dist;
       let mx = nx, mz = nz, speed = e.spd * (e.slow > 0 ? 0.5 : 1);
       if (e.stun > 0) speed = 0;
@@ -789,10 +875,30 @@ export class Game {
         } else if (this.bossRef === e) { this.warnLine.visible = false; if (e.flash <= 0 && e.bState === 'charge') setFlash(e.rig, null); }
       }
 
+      if (e.detourT > 0) { e.detourT -= dt; const c = Math.cos(e.detourSign * 1.15), s = Math.sin(e.detourSign * 1.15); const a = mx * c - mz * s; mz = mx * s + mz * c; mx = a; }
+      const ox = e.x, oz = e.z;
       e.x += (mx * speed + e.vx) * dt; e.z += (mz * speed + e.vz) * dt;
       const kd = Math.max(0, 1 - 9 * dt); e.vx *= kd; e.vz *= kd;
-      resolveCircle(e.x, e.z, e.r, this.level.obstacles, tmp);
+      const hit = resolveCircle(e.x, e.z, e.r, this.level.obstacles, tmp);
       e.x = tmp.x; e.z = tmp.z;
+      const intended = speed * dt;
+      if (hit && intended > 0.001 && Math.hypot(e.x - ox, e.z - oz) < intended * 0.45) {
+        e.blockT += dt;
+        if (hit.hp !== undefined) { if (e.blockT > 0.4) this.damageObstacle(hit, e.dmg * dt * 2.4); } // ломает мебель и двери
+        else if (e.blockT > 0.5) { e.detourT = 0.8; e.detourSign = Math.random() < 0.5 ? -1 : 1; e.blockT = 0; } // обходит
+      } else e.blockT = Math.max(0, e.blockT - dt * 2);
+      // нападение на людей
+      if (this.mode === 'play' && e.atkCd <= 0) {
+        for (const n of this.npcs) {
+          if (n.state === 'dead' || n.invuln > 0) continue;
+          if (n.state === 'hidden' && !(n.shelter && n.shelter.broken)) continue;
+          if (Math.hypot(n.x - e.x, n.z - e.z) < e.r + n.r + 0.12) {
+            e.atkCd = 1.1; if (!e.def.boss) e.rearT = Math.max(e.rearT, 0.5);
+            this.hitNpc(n, e.dmg * 0.9, e);
+            break;
+          }
+        }
+      }
 
       // удар по игроку
       const pd = Math.hypot(p.x - e.x, p.z - e.z);
@@ -971,6 +1077,7 @@ export class Game {
     for (let i = 0; i < xpN; i++) this.addPickup('xp', e.x + (Math.random() - 0.5) * 1.6, e.z + (Math.random() - 0.5) * 1.6, def.xp / xpN);
     const lowBonus = this.p.hp < this.stats.maxHp * 0.4 ? 0.05 : 0;
     if (Math.random() < 0.05 + lowBonus) this.addPickup('pie', e.x, e.z, 1);
+    if (def.id !== 'cub' && Math.random() < 0.05) this.addPickup('ammo', e.x, e.z, Math.floor(Math.random() * 4));
     if (def.boss || (!this.mods?.extOnly && !this.p.fixedWeapon && Math.random() < 0.03)) this.addPickup('crate', e.x, e.z, 1);
   }
 
@@ -989,6 +1096,7 @@ export class Game {
             q.hit.push(e);
             const l = Math.hypot(q.vx, q.vz) || 1;
             if (q.w.explode > 0) { this.explode(q.x, q.z, q.w.explode, q.dmg, 0xffb030); remove = true; break; }
+            if (q.owner) { e.aggro = q.owner; e.aggroT = 3.5; }
             this.hurtEnemy(e, q.dmg, q.vx / l, q.vz / l, q.w.knock, q.crit, false);
             if (q.pierce <= 0) { remove = true; break; }
             q.pierce--;
@@ -1016,7 +1124,9 @@ export class Game {
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
 
-  private explode(x: number, z: number, R: number, dmg: number, color: number, stun = 0, ignoreArmor = false): void {
+  private explode(x: number, z: number, R: number, dmg: number, color: number, stun = 0, ignoreArmor = false, hurtNpcs = false): void {
+    this.noise(x, z, R * 3.2);
+    if (hurtNpcs) for (const n of this.npcs) { if (n.state !== 'dead' && n.state !== 'hidden' && Math.hypot(n.x - x, n.z - z) < R + n.r) this.hitNpc(n, dmg * 0.35, null); }
     audio.play('boom');
     this.shake = Math.min(1, this.shake + 0.35);
     this.burst(x, 0.8, z, 26, [color, 0xffe58a, 0xff6a30, 0xffffff], 9, 6, 0.22, 0.6);
@@ -1176,6 +1286,7 @@ export class Game {
       if (q.kind === 'xp') { size = 0.2; col = 0x58e07a; y = 0.5; }
       else if (q.kind === 'pie') { size = 0.4; col = 0xd9903a; y = 0.6; }
       else if (q.kind === 'crate') { size = 0.62; col = 0xe04030; y = 0.75; }
+      else if (q.kind === 'ammo') { size = 0.4; col = 0x6a9a3a; y = 0.6; }
       dummy.position.set(q.x, y + bob, q.z);
       dummy.rotation.set(q.kind === 'pie' ? 0.3 : 0, q.t * 2.5, 0);
       dummy.scale.set(size, q.kind === 'coin' ? size * 0.35 : size, size);
@@ -1199,6 +1310,7 @@ export class Game {
         this.say(pick(['Пирожок с капустой!', 'С картошкой! Моё любимое!', 'Бабушка пекла!']), 'p');
         break;
       }
+      case 'ammo': this.giveItem(ITEM_KINDS[Math.max(0, Math.min(3, Math.round(q.val)))]); break;
       case 'crate': {
         if (p.fixedWeapon) { p.runCoins += 15; break; }
         const id = pick(CRATE_WEAPONS.filter(w => w !== p.weapon));
@@ -1252,6 +1364,649 @@ export class Game {
     this.input.setEnabled(true);
   }
 
+  // ================================================================ ЛЮДИ (зэки и прочие NPC)
+  private spawnNpcs(): void {
+    for (const sp of this.level.npcs) this.npcs.push(this.makeNpc(sp.x, sp.z, sp.kind));
+  }
+
+  private makeNpc(x: number, z: number, kind: NpcKind): Npc {
+    const def = npcDef(this.level.outfit, kind);
+    const rig = buildHuman(def);
+    rig.root.rotation.order = 'YXZ';
+    rig.root.position.set(x, 0, z);
+    this.scene.add(rig.root);
+    const hp = kind === 'helper' ? 60 : kind === 'brave' ? 50 : 30;
+    return {
+      id: this.npcSeq++, rig, kind, color: def.shirt, x, z, hx: x, hz: z, r: 0.4, hp, maxHp: hp, state: kind === 'helper' ? 'follow' : 'work',
+      fear: 0, t: Math.random() * 6, face: Math.random() * 6, flash: 0, downT: 0, yellCd: 0, throwCd: 1, warnT: 0, stuckT: 0, detourT: 0, detourSign: 1,
+      px: x, pz: z, shelter: null, slot: 0, stage: 0, calmT: 0, coverT: 0, cx: x, cz: z, hasCover: false, leaving: null, invuln: 0, mv: 0, throwAnim: 0,
+    };
+  }
+
+  private reviveNpc(n: Npc): void {
+    n.state = n.kind === 'helper' ? 'follow' : 'work';
+    n.hp = n.maxHp; n.x = n.hx; n.z = n.hz; n.px = n.x; n.pz = n.z; n.fear = 0; n.warnT = 0; n.shelter = null; n.leaving = null; n.hasCover = false; n.invuln = 1;
+    n.rig.root.rotation.x = 0; setFlash(n.rig, null);
+    n.rig.root.position.set(n.x, 0, n.z);
+    this.scene.add(n.rig.root);
+    this.burst(n.x, 1, n.z, 10, [0xd8d0c0, 0xaaa090], 3, 2, 0.2, 0.5, 8);
+  }
+
+  private shout(n: Npc, text: string): void {
+    if (n.yellCd > 0) return;
+    n.yellCd = 2.6;
+    this.float(n.x, 2.3, n.z, text, 'dmg');
+  }
+
+  /** Один заметил медведя — предупредил соседей: паника расходится по цепочке. */
+  private alertNpcs(from: Npc): void {
+    for (const o of this.npcs) {
+      if (o === from || o.state === 'dead' || o.state === 'hidden' || o.state === 'down') continue;
+      if (Math.hypot(o.x - from.x, o.z - from.z) < 8) { o.warnT = Math.max(o.warnT, 5); o.fear = Math.max(o.fear, 0.6); }
+    }
+  }
+
+  private updateNpcs(dt: number): void {
+    const p = this.p;
+    for (const n of this.npcs) {
+      if (n.state === 'dead') continue;
+      n.t += dt; n.yellCd -= dt; n.throwCd -= dt; n.warnT = Math.max(0, n.warnT - dt); n.invuln -= dt; n.mv = 0;
+      n.throwAnim = Math.max(0, n.throwAnim - dt);
+      if (n.flash > 0) { n.flash -= dt; if (n.flash <= 0) setFlash(n.rig, null); }
+      let thr: Enemy | null = null, td = 99;
+      for (const e of this.enemies) {
+        if (e.dead) continue;
+        const d = Math.hypot(e.x - n.x, e.z - n.z) - e.r;
+        if (d < td) { td = d; thr = e; }
+      }
+      const seeR = n.kind === 'coward' ? 10 : 8;
+      const tf = thr && td < seeR ? Math.min(1, ((seeR - td) / seeR) * 1.2) : 0;
+      const want = Math.max(tf, n.warnT > 0 ? 0.6 : 0);
+      n.fear += (want - n.fear) * Math.min(1, dt * (want > n.fear ? 6 : 1));
+
+      if (n.state === 'down') {
+        n.downT -= dt;
+        if (Math.hypot(p.x - n.x, p.z - n.z) < 1.6 && n.downT > 0.05) this.rescueNpc(n);
+        else if (n.downT <= 0) { n.state = 'flee'; n.hasCover = false; n.fear = 1; }
+      } else if (n.state === 'hidden') this.npcHidden(n, dt);
+      else if (n.kind === 'helper') this.npcHelper(n, thr, td, dt);
+      else if (n.kind === 'brave' && n.hp > n.maxHp * 0.4) this.npcBrave(n, thr, td, dt);
+      else this.npcCoward(n, thr, td, dt);
+
+      // позиция и анимация
+      const down = n.state === 'down';
+      const tilt = down ? -1.45 : 0;
+      n.rig.root.rotation.x += (tilt - n.rig.root.rotation.x) * Math.min(1, dt * 14);
+      n.rig.root.position.set(n.x, down ? 0.15 : 0, n.z);
+      n.rig.root.rotation.y = n.face;
+      animateRig(n.rig, n.t, n.mv, true, false);
+      const panic = n.state === 'flee' || n.state === 'toShelter' || n.state === 'hidden' || n.fear > 0.55;
+      if (n.throwAnim > 0) n.rig.armR.rotation.x = -2.4 + (0.3 - n.throwAnim) * 6;
+      else if (panic && !down) { n.rig.armL.rotation.x = -2.6 + Math.sin(n.t * 16) * 0.35; n.rig.armR.rotation.x = -2.6 - Math.sin(n.t * 16) * 0.35; }
+      else if (this.level.outfit === 'convict' && n.state === 'work') {
+        n.rig.armR.rotation.x = -1.6 + Math.sin(n.t * 6 + n.id) * 0.9; n.rig.armL.rotation.x = -1.4 + Math.sin(n.t * 6 + n.id + 0.3) * 0.7;
+      }
+    }
+    // толкотня в проходах
+    for (let i = 0; i < this.npcs.length; i++) {
+      const a = this.npcs[i];
+      if (a.state === 'dead' || a.state === 'hidden') continue;
+      const pdx = a.x - p.x, pdz = a.z - p.z, pd = Math.hypot(pdx, pdz);
+      if (pd < a.r + p.r && pd > 1e-4) { const k = (a.r + p.r - pd); a.x += (pdx / pd) * k; a.z += (pdz / pd) * k; }
+      for (let j = i + 1; j < this.npcs.length; j++) {
+        const b = this.npcs[j];
+        if (b.state === 'dead' || b.state === 'hidden') continue;
+        const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz), min = a.r + b.r;
+        if (d < min && d > 1e-4) { const k = (min - d) / 2; a.x -= (dx / d) * k; a.z -= (dz / d) * k; b.x += (dx / d) * k; b.z += (dz / d) * k; }
+      }
+      resolveCircle(a.x, a.z, a.r, this.level.obstacles, tmp); a.x = tmp.x; a.z = tmp.z;
+    }
+  }
+
+  /** Движение с обходом: если упёрся — берёт обход, а не стоит. */
+  private moveNpc(n: Npc, dx: number, dz: number, speed: number, dt: number): void {
+    const l = Math.hypot(dx, dz);
+    if (l < 1e-4) return;
+    let mx = dx / l, mz = dz / l;
+    if (n.detourT > 0) { n.detourT -= dt; const c = Math.cos(n.detourSign * 1.2), s = Math.sin(n.detourSign * 1.2); const a = mx * c - mz * s; mz = mx * s + mz * c; mx = a; }
+    if (n.fear > 0.5) { // чем сильнее страх, тем непредсказуемее
+      const j = (n.fear - 0.4) * 0.8;
+      mx += Math.cos(n.t * 7 + n.id) * j; mz += Math.sin(n.t * 9 + n.id * 2) * j;
+      const m = Math.hypot(mx, mz) || 1; mx /= m; mz /= m;
+    }
+    n.x += mx * speed * dt; n.z += mz * speed * dt;
+    resolveCircle(n.x, n.z, n.r, this.level.obstacles, tmp);
+    n.x = tmp.x; n.z = tmp.z;
+    n.face = lerpAngle(n.face, Math.atan2(mx, mz), Math.min(1, dt * 12));
+    n.mv = 1;
+    const moved = Math.hypot(n.x - n.px, n.z - n.pz);
+    if (moved < speed * dt * 0.25) {
+      n.stuckT += dt;
+      if (n.stuckT > 0.3) { n.detourT = 0.8; n.detourSign = Math.random() < 0.5 ? -1 : 1; n.stuckT = 0; }
+    } else n.stuckT = Math.max(0, n.stuckT - dt);
+    n.px = n.x; n.pz = n.z;
+  }
+
+  private npcHome(n: Npc, dt: number): void {
+    if (n.leaving) {
+      const sh = n.leaving, front = (n.z - sh.z) * sh.fz;
+      const inside = Math.abs(n.x - sh.x) < 1.5 && front < 1.2 && front > -1.4;
+      if (!inside) n.leaving = null;
+      else {
+        const t = front < 0.7 ? sh.inPt : sh.outPt;
+        this.moveNpc(n, t.x - n.x, t.z - n.z, 3.4, dt);
+        return;
+      }
+    }
+    const d = Math.hypot(n.hx - n.x, n.hz - n.z);
+    if (d > 0.5) { if (n.state !== 'fight' && n.state !== 'follow') n.state = 'return'; this.moveNpc(n, n.hx - n.x, n.hz - n.z, 3.4, dt); }
+    else if (n.state === 'return') n.state = 'work';
+  }
+
+  private npcCoward(n: Npc, thr: Enemy | null, td: number, dt: number): void {
+    const scared = n.fear > 0.12;
+    if (n.state === 'fight' || n.state === 'follow') n.state = scared ? 'flee' : 'return';
+    if (n.state === 'work' || n.state === 'return') {
+      if (scared) this.beginFlee(n);
+      else this.npcHome(n, dt);
+      return;
+    }
+    if (n.state === 'flee') {
+      if (!scared) { n.calmT += dt; if (n.calmT > 3) { n.state = 'return'; n.calmT = 0; n.hasCover = false; } } else n.calmT = 0;
+      this.npcRun(n, thr, td, dt);
+    } else if (n.state === 'toShelter') this.npcToShelter(n, thr, dt);
+  }
+
+  private beginFlee(n: Npc): void {
+    this.shout(n, pick(NPC_SHOUTS));
+    this.alertNpcs(n);
+    n.calmT = 0; n.hasCover = false;
+    const sh = this.pickShelter(n);
+    if (sh) n.state = 'toShelter'; else n.state = 'flee';
+  }
+
+  private npcRun(n: Npc, thr: Enemy | null, td: number, dt: number): void {
+    const speed = (n.kind === 'coward' ? 4.7 : 4.3) * (1 + n.fear * 0.35);
+    n.coverT -= dt;
+    if (thr && td < 2.6) { // вплотную — только бежать прочь
+      this.moveNpc(n, ...this.awayFrom(n, thr), speed, dt);
+      n.hasCover = false;
+      return;
+    }
+    if (thr && (!n.hasCover || n.coverT <= 0)) {
+      const c = this.findCover(n, thr);
+      n.hasCover = !!c; if (c) { n.cx = c.x; n.cz = c.z; }
+      n.coverT = 0.8;
+    }
+    if (n.hasCover) {
+      const d = Math.hypot(n.cx - n.x, n.cz - n.z);
+      if (d > 0.5) this.moveNpc(n, n.cx - n.x, n.cz - n.z, speed, dt);
+    } else if (thr) this.moveNpc(n, ...this.awayFrom(n, thr), speed, dt);
+  }
+
+  private awayFrom(n: Npc, thr: Enemy): [number, number] {
+    let ax = n.x - thr.x, az = n.z - thr.z;
+    const l = Math.hypot(ax, az) || 1; ax /= l; az /= l;
+    if (Math.abs(n.x) > ARENA.hx - 1.6) ax -= Math.sign(n.x) * 1.2;
+    if (Math.abs(n.z) > ARENA.hz - 1.6) az -= Math.sign(n.z) * 1.2;
+    return [ax, az];
+  }
+
+  /** Ищет точку за препятствием, чтобы оно оказалось между человеком и медведем. */
+  private findCover(n: Npc, thr: Enemy): { x: number; z: number } | null {
+    let best: { x: number; z: number } | null = null, bd = 1e9;
+    for (const a of this.level.obstacles) {
+      if (a.off) continue;
+      const hw = (a.maxX - a.minX) / 2, hd = (a.maxZ - a.minZ) / 2;
+      if (hw < 0.45 && hd < 0.45) continue;
+      const cx = (a.minX + a.maxX) / 2, cz = (a.minZ + a.maxZ) / 2;
+      let dx = cx - thr.x, dz = cz - thr.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+      const k = Math.max(hw, hd) + 0.9;
+      const x = cx + dx * k, z = cz + dz * k;
+      if (Math.abs(x) > ARENA.hx - 0.6 || Math.abs(z) > ARENA.hz - 0.6) continue;
+      resolveCircle(x, z, n.r, this.level.obstacles, tmp);
+      if (Math.hypot(tmp.x - x, tmp.z - z) > 0.05) continue;
+      const d = Math.hypot(x - n.x, z - n.z);
+      if (d > 12 || Math.hypot(x - thr.x, z - thr.z) < d * 0.6) continue;
+      if (d < bd) { bd = d; best = { x, z }; }
+    }
+    return best;
+  }
+
+  private pickShelter(n: Npc): Shelter | null {
+    let best: Shelter | null = null, bd = 1e9, bi = 0;
+    for (const sh of this.level.shelters) {
+      if (sh.locked || sh.broken) continue;
+      const i = sh.slots.findIndex(s => s.occ === 0);
+      if (i < 0) continue;
+      const d = Math.hypot(sh.outPt.x - n.x, sh.outPt.z - n.z);
+      if (d > 16) continue;
+      let blocked = false;
+      for (const e of this.enemies) if (!e.dead && Math.hypot(e.x - sh.outPt.x, e.z - sh.outPt.z) < d * 0.6) { blocked = true; break; }
+      if (blocked) continue;
+      if (d < bd) { bd = d; best = sh; bi = i; }
+    }
+    if (!best) return null;
+    best.slots[bi].occ = n.id; best.pending++;
+    n.shelter = best; n.slot = bi; n.stage = 0;
+    return best;
+  }
+
+  private releaseNpc(n: Npc): void {
+    const sh = n.shelter;
+    if (!sh) return;
+    if (n.state === 'toShelter') sh.pending = Math.max(0, sh.pending - 1);
+    const s = sh.slots[n.slot];
+    if (s && s.occ === n.id) s.occ = 0;
+    n.shelter = null;
+  }
+
+  private npcToShelter(n: Npc, thr: Enemy | null, dt: number): void {
+    const sh = n.shelter;
+    if (!sh || sh.broken || sh.locked) { this.releaseNpc(n); n.state = 'flee'; n.hasCover = false; return; }
+    const speed = 5.0 * (1 + n.fear * 0.3);
+    if (n.stage === 0) {
+      if (thr && Math.hypot(thr.x - sh.outPt.x, thr.z - sh.outPt.z) < 1.6) { this.releaseNpc(n); n.state = 'flee'; n.hasCover = false; return; } // у двери уже медведь
+      if (Math.hypot(sh.outPt.x - n.x, sh.outPt.z - n.z) < 0.6) n.stage = 1;
+      else this.moveNpc(n, sh.outPt.x - n.x, sh.outPt.z - n.z, speed, dt);
+    } else if (n.stage === 1) {
+      if (Math.hypot(sh.inPt.x - n.x, sh.inPt.z - n.z) < 0.55) n.stage = 2;
+      else this.moveNpc(n, sh.inPt.x - n.x, sh.inPt.z - n.z, speed, dt);
+    } else {
+      const s = sh.slots[n.slot];
+      if (Math.hypot(s.x - n.x, s.z - n.z) < 0.3) {
+        sh.pending = Math.max(0, sh.pending - 1);
+        n.state = 'hidden'; n.calmT = 0; n.x = s.x; n.z = s.z;
+        this.say('Закрылись! Пусть ломятся!', 'sys');
+      } else this.moveNpc(n, s.x - n.x, s.z - n.z, speed, dt);
+    }
+  }
+
+  private npcHidden(n: Npc, dt: number): void {
+    const sh = n.shelter;
+    if (!sh || sh.broken) { this.releaseNpc(n); n.state = 'flee'; n.hasCover = false; n.fear = 1; return; }
+    const s = sh.slots[n.slot];
+    n.x = s.x; n.z = s.z; n.face = Math.atan2(0, -sh.fz);
+    let near = 99;
+    for (const e of this.enemies) if (!e.dead) near = Math.min(near, Math.hypot(e.x - sh.x, e.z - sh.z));
+    if (near < 11) n.calmT = 0; else n.calmT += dt;
+    if (n.calmT > 2.5 && !sh.locked) { s.occ = 0; n.leaving = sh; n.shelter = null; n.state = 'return'; n.calmT = 0; }
+  }
+
+  private npcBrave(n: Npc, thr: Enemy | null, td: number, dt: number): void {
+    if (!thr || td > 9) {
+      if (n.state !== 'work') n.state = 'return';
+      this.npcHome(n, dt);
+      return;
+    }
+    n.state = 'fight';
+    if (n.yellCd <= 0) { this.shout(n, pick(NPC_BRAVE)); this.alertNpcs(n); }
+    const dx = thr.x - n.x, dz = thr.z - n.z;
+    if (td < 3.6) this.moveNpc(n, -dx, -dz, 4.6, dt);
+    else if (td > 7) this.moveNpc(n, dx, dz, 3.6, dt);
+    else this.moveNpc(n, -dz, dx, 2.4, dt);
+    n.face = lerpAngle(n.face, Math.atan2(dx, dz), Math.min(1, dt * 10));
+    if (n.throwCd <= 0) { this.npcThrow(n, thr, 6); n.throwCd = 1.5 + Math.random() * 0.5; }
+  }
+
+  private npcHelper(n: Npc, thr: Enemy | null, td: number, dt: number): void {
+    const p = this.p;
+    n.state = 'follow';
+    const pdx = p.x - n.x, pdz = p.z - n.z, pd = Math.hypot(pdx, pdz);
+    if (thr && td < 2.8) this.moveNpc(n, ...this.awayFrom(n, thr), 4.8, dt);
+    else if (pd > 4.5) this.moveNpc(n, pdx, pdz, 4.6, dt);
+    else if (pd < 2.0) this.moveNpc(n, -pdx, -pdz, 2.5, dt);
+    if (thr && td < 10 && n.throwCd <= 0) {
+      this.npcThrow(n, thr, 8); n.throwCd = 1.3;
+      n.face = Math.atan2(thr.x - n.x, thr.z - n.z);
+    }
+  }
+
+  private npcThrow(n: Npc, e: Enemy, dmg: number): void {
+    if (this.projs.length >= MAX_PROJ) return;
+    const a = Math.atan2(e.x - n.x, e.z - n.z);
+    this.projs.push({
+      x: n.x + Math.sin(a) * 0.6, z: n.z + Math.cos(a) * 0.6, vx: Math.sin(a) * NPC_THROW.speed, vz: Math.cos(a) * NPC_THROW.speed,
+      life: 1.1, dmg, pierce: 0, w: NPC_THROW, hit: [], crit: false, ang: a, owner: n,
+    });
+    n.throwAnim = 0.3;
+    audio.play('click');
+  }
+
+  private hitNpc(n: Npc, dmg: number, by: Enemy | null): void {
+    if (n.state === 'dead' || n.invuln > 0) return;
+    n.hp -= dmg; n.flash = 0.12; setFlash(n.rig, flashMat);
+    audio.play('hit');
+    this.burst(n.x, 1.0, n.z, 5, [n.color, 0xf0c8a0, 0xffffff], 4, 3, 0.12, 0.5);
+    if (n.hp <= 0) { this.killNpc(n); return; }
+    if (by && n.kind === 'brave' && Math.random() < 0.4) { // отбился
+      const dx = by.x - n.x, dz = by.z - n.z, l = Math.hypot(dx, dz) || 1;
+      this.hurtEnemy(by, 8, dx / l, dz / l, 6, false, false);
+      this.pushNpc(n, -dx / l, -dz / l);
+      this.float(n.x, 2.3, n.z, 'ПОЛУЧАЙ!', 'crit');
+      n.invuln = 0.6;
+      return;
+    }
+    if (n.state === 'hidden' || n.state === 'toShelter') this.releaseNpc(n);
+    n.state = 'down'; n.downT = 1.8; n.invuln = 0.4; n.fear = 1;
+    if (by) { const dx = n.x - by.x, dz = n.z - by.z, l = Math.hypot(dx, dz) || 1; this.pushNpc(n, dx / l, dz / l); }
+    this.shout(n, 'А-А-А!');
+  }
+
+  private pushNpc(n: Npc, ux: number, uz: number): void {
+    n.x += ux * 0.9; n.z += uz * 0.9;
+    resolveCircle(n.x, n.z, n.r, this.level.obstacles, tmp); n.x = tmp.x; n.z = tmp.z;
+  }
+
+  private killNpc(n: Npc): void {
+    this.releaseNpc(n);
+    n.state = 'dead';
+    this.scene.remove(n.rig.root);
+    this.burst(n.x, 1.0, n.z, 18, [n.color, 0xf0c8a0, 0xffffff, 0x555555], 7, 5, 0.17, 0.9);
+    this.float(n.x, 2.2, n.z, '☠', 'dmg');
+    this.npcLost++;
+    audio.play('die');
+    if (Math.random() < 0.5) this.say(pick(['Зэка жалко…', 'Не уберегли!', 'Держитесь, мужики!']), 'sys');
+  }
+
+  private rescueNpc(n: Npc): void {
+    n.hp = Math.min(n.maxHp, n.hp + 25); n.kind = 'helper'; n.state = 'follow'; n.fear = 0.3; n.invuln = 1.2;
+    n.rig.root.rotation.x = 0;
+    this.p.score += 50; this.p.runCoins += 3;
+    this.float(n.x, 2.4, n.z, 'СПАСЁН!', 'heal');
+    audio.play('pickup');
+    this.say('Спасибо, друг! Теперь я с тобой!', 'sys', true);
+  }
+
+  private updateShelters(dt: number): void {
+    if (this.lockT > 0) { this.lockT -= dt; if (this.lockT <= 0) this.unlockShelters(); }
+    for (const sh of this.level.shelters) {
+      if (sh.broken) { sh.door.off = true; sh.doorMesh.visible = false; continue; }
+      if (sh.locked && Math.hypot(this.p.x - sh.outPt.x, this.p.z - sh.outPt.z) < 1.9) {
+        sh.locked = false;
+        this.events.banner('ДВЕРЬ ОТКРЫТА!', 'Люди бегут в укрытие', 'event');
+        audio.play('pickup');
+      }
+      const want = this.npcs.some(n => (n.state === 'toShelter' && n.shelter === sh) || n.leaving === sh);
+      sh.open = want && !sh.locked;
+      sh.door.off = sh.open;
+      sh.doorMesh.visible = !sh.open;
+    }
+  }
+
+  private lockShelters(): void {
+    for (const sh of this.level.shelters) { if (!sh.broken) { sh.locked = true; sh.open = false; } }
+    this.lockT = 25;
+  }
+  private unlockShelters(): void { for (const sh of this.level.shelters) sh.locked = false; this.lockT = 0; }
+
+  private ambush(): void {
+    const alive = this.npcs.filter(n => n.state !== 'dead');
+    if (!alive.length) return;
+    const n = pick(alive);
+    for (let i = 0; i < 2; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const x = Math.max(-5.5, Math.min(5.5, n.x + Math.cos(a) * 4)), z = Math.max(-14, Math.min(14, n.z + Math.sin(a) * 4));
+      this.spawnEnemy(this.wave >= 3 ? 'bear' : 'cub', { x, z });
+    }
+    this.say('Медведь из коридора! Спасай людей!', 'sys', true);
+  }
+
+  /** Повреждение ломаемых предметов и дверей. */
+  private damageObstacle(a: AABB, dmg: number): void {
+    if (a.hp === undefined || a.off) return;
+    a.hp -= dmg;
+    const cx = (a.minX + a.maxX) / 2, cz = (a.minZ + a.maxZ) / 2;
+    if (Math.random() < 0.12) { this.burst(cx, 0.8, cz, 2, [a.color ?? 0x8a6a40, 0xd8c8a0], 3, 3, 0.14, 0.5); audio.play('hit'); }
+    if (a.hp <= 0) {
+      a.off = true;
+      if (a.mesh) a.mesh.visible = false;
+      this.burst(cx, 0.9, cz, 26, [a.color ?? 0x8a6a40, 0xd8c8a0, 0x5a4020], 8, 6, 0.2, 0.9);
+      this.shake = Math.min(1, this.shake + 0.25);
+      audio.play('boom');
+      if (a.shelter) { a.shelter.broken = true; a.shelter.open = true; this.say('Дверь выломана! Люди в опасности!', 'sys', true); }
+    }
+  }
+
+  // ================================================================ Цели медведей
+  private inSmoke(x: number, z: number): boolean {
+    for (const s of this.smokes) if (Math.hypot(s.x - x, s.z - z) < s.r) return true;
+    return false;
+  }
+
+  /** Медведь сам выбирает цель: игрок, убегающий человек, приманка, дверь укрытия. */
+  private updateTarget(e: Enemy, dt: number): void {
+    const p = this.p;
+    e.retarget -= dt; e.lureT -= dt; e.aggroT -= dt;
+    if (e.tkind === 'npc' && (!e.tnpc || e.tnpc.state === 'dead' || e.tnpc.state === 'hidden')) e.retarget = 0;
+    if (e.retarget <= 0) {
+      e.retarget = 0.35 + Math.random() * 0.15;
+      const dP = Math.hypot(p.x - e.x, p.z - e.z);
+      let best = dP * (dP < 5 ? 0.7 : 1);
+      let kind: Enemy['tkind'] = 'player', tnpc: Npc | null = null, tx = p.x, tz = p.z;
+      if (this.inSmoke(e.x, e.z)) { // в дыму ничего не видит — бродит
+        kind = 'wander'; e.wAng += (Math.random() - 0.5) * 2.6; tx = e.x + Math.cos(e.wAng) * 4; tz = e.z + Math.sin(e.wAng) * 4; best = -1;
+      } else {
+        for (const g of this.grenades) {
+          if (g.kind !== 'decoy' || !g.landed) continue;
+          const d = Math.hypot(g.x - e.x, g.z - e.z);
+          if (d < 22 && dP > 2.4 && d * 0.2 < best) { best = d * 0.2; kind = 'lure'; tx = g.x; tz = g.z; }
+        }
+        if (e.lureT > 0 && dP > 4) {
+          const d = Math.hypot(e.lureX - e.x, e.lureZ - e.z);
+          if (d * 0.5 < best) { best = d * 0.5; kind = 'lure'; tx = e.lureX; tz = e.lureZ; }
+        }
+        for (const n of this.npcs) {
+          if (n.state === 'dead') continue;
+          let score: number, px = n.x, pz = n.z, k: 'npc' | 'door' = 'npc';
+          if (n.state === 'hidden') {
+            const sh = n.shelter;
+            if (!sh || sh.broken) continue;
+            const d = Math.hypot(sh.outPt.x - e.x, sh.outPt.z - e.z);
+            if (d > 13) continue;
+            score = d * 1.25; px = sh.outPt.x; pz = sh.outPt.z; k = 'door';
+          } else {
+            const d = Math.hypot(n.x - e.x, n.z - e.z);
+            if (d > 9.5) continue;
+            score = d * 0.78;
+          }
+          if (e.aggro === n && e.aggroT > 0) score *= 0.4;
+          if (e.tnpc === n) score *= 0.8;
+          if (score < best) { best = score; kind = k; tnpc = n; tx = px; tz = pz; }
+        }
+      }
+      e.tkind = kind; e.tnpc = tnpc; e.tx = tx; e.tz = tz;
+    }
+    if (e.tkind === 'player') { e.tx = p.x; e.tz = p.z; }
+    else if (e.tkind === 'npc' && e.tnpc) { e.tx = e.tnpc.x; e.tz = e.tnpc.z; }
+  }
+
+  /** Громкий звук: люди пугаются, медведи идут проверить. */
+  private noise(x: number, z: number, R: number): void {
+    for (const n of this.npcs) {
+      if (n.state === 'dead' || n.state === 'hidden') continue;
+      if (Math.hypot(n.x - x, n.z - z) < R) { n.warnT = Math.max(n.warnT, 4); n.fear = Math.max(n.fear, 0.5); }
+    }
+    for (const e of this.enemies) {
+      if (e.dead || e.def.boss) continue;
+      if (Math.hypot(e.x - x, e.z - z) < R * 0.9) { e.lureT = 3; e.lureX = x; e.lureZ = z; }
+    }
+  }
+
+  // ================================================================ Гранаты и тактические предметы
+  private giveItem(kind: ItemKind): boolean {
+    const total = ITEM_KINDS.reduce((s, k) => s + this.items[k], 0);
+    if (total >= ITEM_CAP || this.items[kind] >= ITEM_MAX) { this.float(this.p.x, 2.4, this.p.z, 'РЮКЗАК ПОЛОН', 'dmg'); return false; }
+    this.items[kind]++;
+    this.float(this.p.x, 2.4, this.p.z, ITEM_INFO[kind].icon + ' +1', 'heal');
+    audio.play('pickup');
+    return true;
+  }
+
+  /** Быстрый бросок предмета по кнопке: цель выбирается автоматически. */
+  useItem(kind: ItemKind): void {
+    if (this.mode !== 'play' || this.itemCd > 0 || this.items[kind] <= 0) return;
+    const p = this.p;
+    let target: Enemy | null = null, best = 14 * 14;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const d = (e.x - p.x) ** 2 + (e.z - p.z) ** 2;
+      if (d < best) { best = d; target = e; }
+    }
+    let x1 = p.x + Math.sin(p.face) * 6, z1 = p.z + Math.cos(p.face) * 6;
+    if (kind === 'decoy') {
+      if (target) { const dx = target.x - p.x, dz = target.z - p.z, l = Math.hypot(dx, dz) || 1; x1 = target.x + (dx / l) * 5; z1 = target.z + (dz / l) * 5; }
+    } else if (target) {
+      x1 = target.x; z1 = target.z;
+      if (kind === 'frag') { // бросаем в самую плотную кучу
+        let bn = 0;
+        for (const a of this.enemies) {
+          if (a.dead || Math.hypot(a.x - p.x, a.z - p.z) > 13) continue;
+          let nb = 0;
+          for (const b of this.enemies) if (!b.dead && Math.hypot(a.x - b.x, a.z - b.z) < 3.2) nb++;
+          if (nb > bn) { bn = nb; x1 = a.x; z1 = a.z; }
+        }
+      }
+    } else if (kind === 'net') { this.say('Некого ловить!', 'sys', true); return; }
+    x1 = Math.max(-ARENA.hx + 0.6, Math.min(ARENA.hx - 0.6, x1)); z1 = Math.max(-ARENA.hz + 0.6, Math.min(ARENA.hz - 0.6, z1));
+    const mesh = this.gPool.find(m => !m.visible);
+    if (!mesh) return;
+    this.items[kind]--; this.itemCd = 0.9;
+    mesh.material = this.gMats[kind]; mesh.visible = true;
+    mesh.scale.set(kind === 'decoy' ? 1.6 : 1, 1, 1);
+    mesh.position.set(p.x, 1.2, p.z);
+    this.grenades.push({ kind, x0: p.x, z0: p.z, x1, z1, x: p.x, z: p.z, t: 0, dur: 0.6, landed: false, ttl: 0, mesh, bark: 0 });
+    audio.play('click');
+    this.say(ITEM_INFO[kind].quip, 'p');
+  }
+
+  private updateGrenades(dt: number): void {
+    this.itemCd -= dt;
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      if (!g.landed) {
+        g.t += dt;
+        const k = Math.min(1, g.t / g.dur);
+        g.x = g.x0 + (g.x1 - g.x0) * k; g.z = g.z0 + (g.z1 - g.z0) * k;
+        g.mesh.position.set(g.x, 0.9 + Math.sin(k * Math.PI) * 3.2, g.z);
+        g.mesh.rotation.x += dt * 10; g.mesh.rotation.y += dt * 6;
+        if (k >= 1) this.landGrenade(g);
+        continue;
+      }
+      g.ttl -= dt;
+      let done = false;
+      if (g.kind === 'frag') {
+        g.mesh.visible = g.ttl > 0.4 || Math.floor(g.ttl * 20) % 2 === 0;
+        if (g.ttl <= 0) { this.explode(g.x, g.z, 3.8, 85 * this.stats.dmgMul, 0xffa030, 0.6, false, true); done = true; }
+      } else if (g.kind === 'decoy') {
+        g.bark -= dt;
+        if (g.bark <= 0) { g.bark = 0.8; audio.play('decoy'); this.float(g.x, 1.9, g.z, 'ТЫЦ-ТЫЦ!', 'dmg'); this.noise(g.x, g.z, 16); }
+        g.mesh.rotation.y += dt * 3; g.mesh.position.y = 0.3 + Math.abs(Math.sin(this.time * 8)) * 0.12;
+        if (g.ttl <= 0) { this.explode(g.x, g.z, 2.6, 50, 0xb050d0, 0.5, false, true); done = true; }
+      } else if (g.ttl <= 0) done = true;
+      if (done) { g.mesh.visible = false; this.grenades.splice(i, 1); }
+    }
+  }
+
+  private landGrenade(g: Grenade): void {
+    g.landed = true; g.x = g.x1; g.z = g.z1; g.mesh.position.set(g.x, 0.25, g.z); g.mesh.rotation.set(0, 0, 0);
+    switch (g.kind) {
+      case 'frag': g.ttl = 1.0; break;
+      case 'decoy': g.ttl = 7; g.bark = 0; break;
+      case 'smoke':
+        g.ttl = 0.01;
+        this.smokes.push({ x: g.x, z: g.z, r: 3.3, t: 7, puff: 0 });
+        this.burst(g.x, 0.6, g.z, 16, [0xc8c8cc, 0xa8a8b0], 3, 1.5, 0.5, 1.2, 0);
+        audio.play('hit'); this.noise(g.x, g.z, 8);
+        this.float(g.x, 1.9, g.z, 'ДЫМ!', 'crit');
+        break;
+      case 'net': {
+        g.ttl = 0.01;
+        let t: Enemy | null = null, bd = 2.6;
+        for (const e of this.enemies) { if (e.dead) continue; const d = Math.hypot(e.x - g.x, e.z - g.z) - e.r * 0.5; if (d < bd) { bd = d; t = e; } }
+        const slot = this.netMeshes.find(s => !s.e);
+        if (t && slot) {
+          t.netT = t.def.boss ? 2 : 4.5; t.stun = Math.max(t.stun, t.netT);
+          slot.e = t; slot.mesh.visible = true;
+          this.float(t.x, 2.6 * t.def.size, t.z, 'ПОЙМАН!', 'crit');
+          audio.play('pickup');
+        } else this.float(g.x, 1.8, g.z, 'МИМО!', 'dmg');
+        break;
+      }
+    }
+  }
+
+  private updateSmokes(dt: number): void {
+    for (let i = this.smokes.length - 1; i >= 0; i--) {
+      const s = this.smokes[i];
+      s.t -= dt; s.puff -= dt;
+      if (s.puff <= 0) {
+        s.puff = 0.12;
+        this.burst(s.x + (Math.random() - 0.5) * s.r * 1.6, 0.4 + Math.random() * 1.2, s.z + (Math.random() - 0.5) * s.r * 1.6, 2, [0xc8c8cc, 0xa8a8b0, 0xdadade], 0.6, 0.8, 0.55, 1.8, -0.6);
+      }
+      if (s.t <= 0) this.smokes.splice(i, 1);
+    }
+  }
+
+  private updateNets(dt: number): void {
+    for (const s of this.netMeshes) {
+      const e = s.e;
+      if (!e) continue;
+      if (e.dead || e.netT <= 0) { s.e = null; s.mesh.visible = false; continue; }
+      e.netT -= dt; e.stun = Math.max(e.stun, 0.2);
+      const sc = e.def.size * 1.6;
+      s.mesh.position.set(e.x, 0.9 * e.def.size, e.z); s.mesh.scale.set(sc, sc * 1.1, sc);
+    }
+  }
+
+  // ================================================================ Продолжение после смерти
+  private afterDeath(): void {
+    if (this.continuesLeft > 0) { this.mode = 'continue'; this.events.continuePrompt(this.continuesLeft, Math.max(1, this.wave)); }
+    else this.finish();
+  }
+
+  endRun(): void { if (this.mode === 'continue') this.finish(); }
+
+  private findSafeSpot(x: number, z: number): { x: number; z: number } {
+    const margin = (px: number, pz: number): number => {
+      resolveCircle(px, pz, this.p.r + 0.3, this.level.obstacles, tmp);
+      if (Math.hypot(tmp.x - px, tmp.z - pz) > 0.05) return -1;
+      let m = 99;
+      for (const e of this.enemies) if (!e.dead) m = Math.min(m, Math.hypot(e.x - px, e.z - pz) - e.r);
+      return m > 4 ? m : -1;
+    };
+    if (margin(x, z) > 0) return { x, z };
+    let best = { x: 0, z: 10 }, bs = -1e9;
+    for (let gx = -5; gx <= 5; gx += 1.25) for (let gz = -13.5; gz <= 13.5; gz += 1.5) {
+      const m = margin(gx, gz);
+      if (m < 0) continue;
+      const s = Math.min(m, 10) - 0.25 * Math.hypot(gx - x, gz - z);
+      if (s > bs) { bs = s; best = { x: gx, z: gz }; }
+    }
+    return best;
+  }
+
+  continueRun(): void {
+    if (this.mode !== 'continue' || this.continuesLeft <= 0) return;
+    this.continuesLeft--;
+    const p = this.p;
+    const safe = this.findSafeSpot(p.x, p.z);
+    p.x = safe.x; p.z = safe.z; p.kx = p.kz = 0;
+    p.hp = this.stats.maxHp * 0.6; p.invuln = 4; p.deathTilt = 0; p.lowHpSaid = false;
+    this.rig.root.rotation.x = 0; this.rig.root.position.set(p.x, 0, p.z); this.rig.root.visible = true; setFlash(this.rig, null);
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const dx = e.x - p.x, dz = e.z - p.z, d = Math.hypot(dx, dz);
+      if (d < 6) { const l = d || 1; e.vx += (dx / l) * 16; e.vz += (dz / l) * 16; e.stun = Math.max(e.stun, 1.2); }
+    }
+    this.burst(p.x, 1, p.z, 40, [0xffe58a, 0xffffff, 0x7ad8ff], 9, 7, 0.2, 0.9);
+    this.mode = 'play'; this.input.setEnabled(true);
+    this.slowT = 0; this.hitStop = 0.1; this.zoomKick = 0.6; this.shake = 0.8;
+    audio.play('levelup');
+    this.events.banner('ВОСКРЕСЕНИЕ!', this.continuesLeft > 0 ? 'Продолжений осталось: ' + this.continuesLeft : 'Это было последнее продолжение', 'event');
+    this.say('Меня так просто не взять!', 'p', true);
+  }
+
   // ---------------------------------------------------------------- частицы / тени / камера
   private burst(x: number, y: number, z: number, n: number, colors: number[], speed: number, up: number, size: number, life: number, grav = 18): void {
     for (let i = 0; i < n; i++) {
@@ -1302,6 +2057,7 @@ export class Game {
     } else {
       if (this.mode !== 'over') put(this.p.x, this.p.z, this.charDef.hitR * 2.6);
       for (const e of this.enemies) put(e.x, e.z, e.r * 2.5, e.dead ? Math.max(0, e.fy) : 0);
+      for (const n of this.npcs) if (n.state !== 'dead') put(n.x, n.z, 1.1);
     }
     m.count = k; m.instanceMatrix.needsUpdate = true;
   }
@@ -1331,7 +2087,7 @@ export class Game {
     const p = this.p, w = WEAPONS[p.weapon];
     const maxCd = BOMB_CD * this.stats.bombCd;
     this.events.hud({
-      points: this.pendingLevels, hp: Math.max(0, p.hp), maxHp: this.stats.maxHp, xp: p.xp, xpNext: p.xpNext, lvl: p.lvl, wave: Math.max(1, this.wave), score: p.score,
+      continues: this.continuesLeft, items: this.items, itemCd: Math.max(0, this.itemCd), points: this.pendingLevels, hp: Math.max(0, p.hp), maxHp: this.stats.maxHp, xp: p.xp, xpNext: p.xpNext, lvl: p.lvl, wave: Math.max(1, this.wave), score: p.score,
       coins: p.runCoins, bombFrac: Math.max(0, Math.min(1, 1 - p.bombCd / maxCd)), weaponIcon: w.icon, weaponName: w.name,
       weaponFrac: p.weapon === 'spoon' || p.fixedWeapon ? 0 : Math.max(0, p.weaponT / 18), combo: p.combo,
       mult: Math.min(3, 1 + Math.floor(p.combo / 5) * 0.25), left: this.queue.length + this.aliveCount(),

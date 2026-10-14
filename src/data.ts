@@ -144,6 +144,8 @@ export const EVENTS = {
   blackout: { title: 'СВЕТ ВЫРУБИЛИ!', sub: 'Опять эти коммунальные службы...' },
   pirozhki: { title: 'ПИРОЖКИ С НЕБА!', sub: 'Тётя Валя расщедрилась. Подбирайте!' },
   rush: { title: 'ОБЕДЕННЫЙ ПЕРЕРЫВ!', sub: 'Очередь мишек до самого подъезда!' },
+  ambush: { title: 'МЕДВЕДЬ ЗА СПИНОЙ!', sub: 'Выскочил из коридора прямо к людям!' },
+  lock: { title: 'ДВЕРИ ЗАКЛИНИЛО!', sub: 'Подбеги к двери — открой людям укрытие!' },
 } as const;
 export const DEATH_JOKES = [
   'Не повезло. Хотя медведи довольны.', 'Компот остался нетронутым.', 'Тётя Валя всё видела.',
@@ -177,3 +179,10 @@ export function todayMutator(): Mutator {
 export function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
+
+/** Сколько продолжений после смерти открыто: за лучшую достигнутую волну (макс. 3). */
+export function continuesFor(bestWave: number): number {
+  return bestWave >= 10 ? 3 : bestWave >= 6 ? 2 : bestWave >= 3 ? 1 : 0;
+}
+export const NPC_SHOUTS = ['МЕДВЕДЬ!!!', 'ААА!', 'БЕЖИМ!', 'МАМА!', 'ПРЯЧЬТЕСЬ!', 'ОН ИДЁТ СЮДА!'];
+export const NPC_BRAVE = ['ЭЙ, КОСОЛАПЫЙ!', 'НА, ДЕРЖИ!', 'Я ЕГО ОТВЛЕКУ!'];
