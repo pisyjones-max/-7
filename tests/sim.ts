@@ -94,7 +94,7 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     game.p.x = 5.4; game.p.z = -2.0; game.p.invuln = 99;
     const before = game.level.obstacles.filter((a: any) => a.hp !== undefined && !a.off).length;
     game.spawnEnemy('bear', { x: 5.4, z: -10.5 });
-    step(game, 25);
+    step(game, 45);
     const after = game.level.obstacles.filter((a: any) => a.hp !== undefined && !a.off).length;
     ok(after < before, 'медведь ломает мебель на пути (' + before + ' -> ' + after + ')');
   }

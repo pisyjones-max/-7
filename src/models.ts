@@ -22,6 +22,27 @@ export function box(w: number, h: number, d: number, x: number, y: number, z: nu
   return g;
 }
 
+function paint(g: Geo, color: number): Geo {
+  const c = new THREE.Color(color);
+  const n = g.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
+function shape(g: Geo, color: number, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0): Geo {
+  g.scale(sx, sy, sz);
+  if (rx) g.rotateX(rx);
+  if (rz) g.rotateZ(rz);
+  g.translate(x, y, z);
+  return paint(g, color);
+}
+/** Округлые формы для медведей: эллипсоиды, капсулы, конусы. */
+const ball = (r: number, color: number, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0) => shape(new THREE.SphereGeometry(r, 9, 7), color, x, y, z, sx, sy, sz, rx, rz);
+const caps = (r: number, len: number, color: number, x: number, y: number, z: number, rx = 0, rz = 0) => shape(new THREE.CapsuleGeometry(r, len, 3, 8), color, x, y, z, 1, 1, 1, rx, rz);
+const cone = (r: number, h: number, color: number, x: number, y: number, z: number, rx = 0, rz = 0) => shape(new THREE.ConeGeometry(r, h, 6), color, x, y, z, 1, 1, 1, rx, rz);
+const cyl = (rt: number, rb: number, h: number, color: number, x: number, y: number, z: number) => shape(new THREE.CylinderGeometry(rt, rb, h, 12), color, x, y, z);
+
 export function merge(parts: Geo[]): Geo {
   const g = mergeGeometries(parts, false);
   parts.forEach(p => p.dispose());
@@ -147,59 +168,63 @@ export function buildHuman(def: CharDef): Rig {
 
 // ---------------- МЕДВЕДИ ----------------
 export function buildBear(def: EnemyDef): Rig {
-  let set = cache.get('b' + def.id);
+  let set = cache.get('bs' + def.id);
   const fur = def.fur;
   const belly = def.belly;
   if (!set) {
-    const boss = def.boss;
     const eyeCol = def.id === 'mutant' ? 0xffee00 : def.id === 'dog' ? 0xffc010 : 0xff1a1a;
+    const dark = new THREE.Color(fur).multiplyScalar(0.55).getHex();
     const headP: Geo[] = [
-      box(0.75, 0.65, 0.65, 0, 0, 0, fur),
-      box(0.36, 0.26, 0.25, 0, -0.1, 0.4, belly),
-      box(0.12, 0.08, 0.06, 0, -0.02, 0.54, 0x111111),
-      box(0.22, 0.22, 0.12, -0.3, 0.38, 0, fur), box(0.22, 0.22, 0.12, 0.3, 0.38, 0, fur),
-      box(0.12, 0.12, 0.02, -0.3, 0.38, 0.07, 0x5a3a2a), box(0.12, 0.12, 0.02, 0.3, 0.38, 0.07, 0x5a3a2a),
-      box(0.15, 0.1, 0.02, -0.17, 0.1, 0.33, 0xffffff), box(0.15, 0.1, 0.02, 0.17, 0.1, 0.33, 0xffffff),
-      box(0.07, 0.08, 0.02, -0.15, 0.1, 0.34, eyeCol), box(0.07, 0.08, 0.02, 0.15, 0.1, 0.34, eyeCol),
-      box(0.26, 0.07, 0.03, -0.16, 0.2, 0.35, 0x111111, -0.5), box(0.26, 0.07, 0.03, 0.16, 0.2, 0.35, 0x111111, 0.5),
-      box(0.3, 0.1, 0.02, 0, -0.2, 0.52, 0x5a0a0a),
-      box(0.06, 0.09, 0.03, -0.11, -0.17, 0.53, 0xffffff), box(0.06, 0.09, 0.03, 0.11, -0.17, 0.53, 0xffffff), box(0.05, 0.07, 0.03, -0.03, -0.18, 0.53, 0xffffff), box(0.05, 0.07, 0.03, 0.03, -0.18, 0.53, 0xffffff),
+      ball(1, fur, 0, 0, 0, 0.4, 0.34, 0.36),
+      ball(1, belly, 0, -0.1, 0.3, 0.2, 0.15, 0.22),
+      ball(0.07, 0x111111, 0, -0.03, 0.5),
+      ball(0.13, fur, -0.26, 0.28, -0.02), ball(0.13, fur, 0.26, 0.28, -0.02),
+      ball(0.075, 0x5a3a2a, -0.26, 0.28, 0.06), ball(0.075, 0x5a3a2a, 0.26, 0.28, 0.06),
+      ball(1, 0xffffff, -0.16, 0.09, 0.3, 0.085, 0.065, 0.05), ball(1, 0xffffff, 0.16, 0.09, 0.3, 0.085, 0.065, 0.05),
+      ball(0.04, eyeCol, -0.155, 0.09, 0.34), ball(0.04, eyeCol, 0.155, 0.09, 0.34),
+      ball(1, 0x111111, -0.16, 0.19, 0.31, 0.14, 0.035, 0.035, 0, -0.55), ball(1, 0x111111, 0.16, 0.19, 0.31, 0.14, 0.035, 0.035, 0, 0.55),
+      ball(1, 0x5a0a0a, 0, -0.2, 0.36, 0.15, 0.04, 0.06),
+      cone(0.028, 0.09, 0xffffff, -0.07, -0.19, 0.42, Math.PI), cone(0.028, 0.09, 0xffffff, 0.07, -0.19, 0.42, Math.PI),
     ];
-    const bodyP: Geo[] = [box(0.95, 0.85, 0.7, 0, 0, 0, fur), box(0.66, 0.6, 0.02, 0, -0.04, 0.36, belly)];
-    const legP: Geo[] = [box(0.3, 0.45, 0.32, 0, -0.225, 0, fur), box(0.32, 0.08, 0.36, 0, -0.4, 0.03, 0x2a1a10)];
-    const armP = (): Geo[] => [box(0.28, 0.7, 0.3, 0, -0.35, 0, fur), box(0.05, 0.07, 0.08, -0.08, -0.72, 0.12, 0xf0f0f0), box(0.05, 0.07, 0.08, 0.08, -0.72, 0.12, 0xf0f0f0)];
+    const bodyP: Geo[] = [
+      ball(1, fur, 0, 0, 0, 0.52, 0.5, 0.4),
+      ball(1, fur, 0, 0.27, -0.1, 0.44, 0.32, 0.34),
+      ball(1, belly, 0, -0.04, 0.26, 0.36, 0.38, 0.2),
+    ];
+    const legP: Geo[] = [caps(0.15, 0.28, fur, 0, -0.16, 0), ball(1, dark, 0, -0.38, 0.06, 0.17, 0.08, 0.25)];
+    const armP = (): Geo[] => [caps(0.15, 0.42, fur, 0, -0.3, 0), cone(0.035, 0.1, 0xf0f0f0, -0.08, -0.72, 0.08, Math.PI), cone(0.035, 0.1, 0xf0f0f0, 0, -0.74, 0.1, Math.PI), cone(0.035, 0.1, 0xf0f0f0, 0.08, -0.72, 0.08, Math.PI)];
     const armLP = armP(); const armRP = armP();
 
     switch (def.id) {
       case 'cub':
-        headP.push(box(0.2, 0.08, 0.04, 0, -0.27, 0.34, 0xdd3333)); // язык наглеца
+        headP.push(ball(1, 0xdd3333, 0, -0.27, 0.34, 0.09, 0.03, 0.06));
         break;
       case 'dog':
-        headP.push(box(0.13, 0.34, 0.1, -0.2, 0.52, 0, fur), box(0.13, 0.34, 0.1, 0.2, 0.52, 0, fur), box(0.3, 0.2, 0.3, 0, -0.1, 0.62, belly), box(0.14, 0.2, 0.04, 0, -0.3, 0.5, 0xdd3355));
-        bodyP.push(box(0.14, 0.55, 0.14, 0, -0.62, -0.1, fur));
+        headP.push(cone(0.1, 0.34, fur, -0.2, 0.5, 0), cone(0.1, 0.34, fur, 0.2, 0.5, 0), ball(1, belly, 0, -0.1, 0.45, 0.17, 0.13, 0.3));
+        bodyP.push(caps(0.06, 0.45, fur, 0, -0.64, -0.12));
         break;
       case 'tank': // кастрюля-шлем и нагрудник из крышек
-        headP.push(box(0.92, 0.42, 0.92, 0, 0.5, 0, 0x9aa0a8), box(0.22, 0.12, 0.14, -0.57, 0.5, 0, 0x6a7078), box(0.22, 0.12, 0.14, 0.57, 0.5, 0, 0x6a7078), box(0.6, 0.06, 0.04, 0, 0.3, 0.46, 0x666c74));
-        bodyP.push(box(1.0, 0.7, 0.12, 0, 0, 0.38, 0x8c929a), box(0.1, 0.1, 0.04, -0.3, 0.2, 0.46, 0xdddddd), box(0.1, 0.1, 0.04, 0.3, 0.2, 0.46, 0xdddddd), box(0.1, 0.1, 0.04, 0, -0.2, 0.46, 0xdddddd));
-        armLP.push(box(0.34, 0.2, 0.34, 0, -0.08, 0, 0x8c929a)); armRP.push(box(0.34, 0.2, 0.34, 0, -0.08, 0, 0x8c929a));
+        headP.push(cyl(0.46, 0.5, 0.38, 0x9aa0a8, 0, 0.46, 0), cyl(0.54, 0.54, 0.06, 0x666c74, 0, 0.28, 0), ball(0.1, 0x6a7078, -0.52, 0.46, 0), ball(0.1, 0x6a7078, 0.52, 0.46, 0));
+        bodyP.push(ball(1, 0x8c929a, 0, 0, 0.3, 0.46, 0.34, 0.16), ball(0.06, 0xdddddd, -0.2, 0.15, 0.44), ball(0.06, 0xdddddd, 0.2, 0.15, 0.44), ball(0.06, 0xdddddd, 0, -0.15, 0.44));
+        armLP.push(ball(0.19, 0x8c929a, 0, -0.06, 0)); armRP.push(ball(0.19, 0x8c929a, 0, -0.06, 0));
         break;
       case 'fisher':
-        headP.push(box(0.85, 0.2, 0.85, 0, 0.42, 0, 0xf2c230), box(0.6, 0.05, 0.3, 0, 0.33, 0.5, 0xf2c230));
-        bodyP.push(box(1.0, 0.62, 0.74, 0, 0.12, 0, 0xf2c230));
-        armRP.push(box(0.12, 0.2, 0.55, 0, -0.78, 0.1, 0x6aa0c8), box(0.04, 0.12, 0.1, 0, -0.78, 0.4, 0x6aa0c8));
+        headP.push(cyl(0.38, 0.42, 0.18, 0xf2c230, 0, 0.4, 0), cyl(0.55, 0.55, 0.04, 0xf2c230, 0, 0.31, 0.08));
+        bodyP.push(ball(1, 0xf2c230, 0, 0.1, 0.02, 0.56, 0.36, 0.44));
+        armRP.push(ball(1, 0x6aa0c8, 0, -0.7, 0.14, 0.08, 0.22, 0.08, 0.5), cone(0.07, 0.14, 0x6aa0c8, 0, -0.9, 0.2, 2.2));
         break;
       case 'potap': // в ушанке и с золотой цепью
-        headP.push(box(0.84, 0.2, 0.84, 0, 0.42, 0, 0x7b5230), box(0.12, 0.34, 0.4, -0.45, 0.2, 0, 0x7b5230), box(0.12, 0.34, 0.4, 0.45, 0.2, 0, 0x7b5230), box(0.16, 0.16, 0.03, 0, 0.45, 0.43, 0xdd2222));
-        bodyP.push(box(0.8, 0.07, 0.03, 0, 0.3, 0.37, 0xffd24a), box(0.18, 0.18, 0.04, 0, 0.14, 0.38, 0xffd24a));
+        headP.push(ball(1, 0x7b5230, 0, 0.36, 0, 0.46, 0.22, 0.45), ball(1, 0x7b5230, -0.42, 0.1, 0, 0.12, 0.3, 0.28), ball(1, 0x7b5230, 0.42, 0.1, 0, 0.12, 0.3, 0.28), ball(0.08, 0xdd2222, 0, 0.42, 0.38, 1, 1, 0.3));
+        bodyP.push(ball(1, 0xffd24a, 0, 0.2, 0.34, 0.32, 0.05, 0.06), ball(0.09, 0xffd24a, 0, 0.08, 0.4, 1, 1, 0.5));
         break;
       case 'mutant':
-        headP.push(box(0.12, 0.34, 0.12, -0.2, 0.55, 0, 0x7b3fe4), box(0.12, 0.44, 0.12, 0, 0.6, -0.1, 0x7b3fe4), box(0.12, 0.34, 0.12, 0.2, 0.55, 0, 0x7b3fe4));
-        bodyP.push(box(0.3, 0.3, 0.3, -0.55, 0.42, 0, 0x7b3fe4), box(0.3, 0.3, 0.3, 0.55, 0.42, 0, 0x7b3fe4), box(0.2, 0.4, 0.2, 0, 0.1, -0.42, 0x7b3fe4));
+        headP.push(cone(0.07, 0.34, 0x7b3fe4, -0.2, 0.52, 0), cone(0.08, 0.46, 0x7b3fe4, 0, 0.6, -0.1), cone(0.07, 0.34, 0x7b3fe4, 0.2, 0.52, 0));
+        bodyP.push(ball(0.21, 0x7b3fe4, -0.55, 0.4, 0), ball(0.21, 0x7b3fe4, 0.55, 0.4, 0), cone(0.09, 0.42, 0x7b3fe4, 0, 0.42, -0.5, -1.3), cone(0.08, 0.36, 0x7b3fe4, -0.2, 0.2, -0.45, -1.3), cone(0.08, 0.36, 0x7b3fe4, 0.2, 0.2, -0.45, -1.3));
         break;
       default: break;
     }
     set = { body: merge(bodyP), head: merge(headP), leg: merge(legP), armL: merge(armLP), armR: merge(armRP) };
-    cache.set('b' + def.id, set);
+    cache.set('bs' + def.id, set);
   }
   const rig = assembleBear(set);
   rig.head.scale.setScalar(def.id === 'cub' ? 1.28 : 1.15);
