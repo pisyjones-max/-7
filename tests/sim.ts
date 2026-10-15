@@ -37,7 +37,7 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
   {
     const { game } = await boot('sawmill');
     game.start();
-    ok(game.npcs.length === 5, 'на лесопилке 5 заключённых');
+    ok(game.npcs.length === 7, 'на лесопилке 7 заключённых (5 в цехе + 2 в дальней комнате)');
     ok(game.level.shelters.length === 2, 'на лесопилке 2 укрытия');
     game.waveState = 'break'; game.breakT = 999; // без обычных волн, только наш медведь
     step(game, 1);
@@ -214,7 +214,7 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     const { game, input } = await boot('canteen');
     game.start(); game.waveState = 'break'; game.breakT = 999;
     game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
-    game.locIndex = 5; game.wave = 5; game.p.invuln = 1e9; game.p.x = 0; game.p.z = 9;
+    game.locIndex = 6; game.wave = 5; game.p.invuln = 1e9; game.p.x = 0; game.p.z = 9;
     const e = game.spawnEnemy('cub', { x: 0, z: 6.5 });
     let glued = 0, frames = 0, minD = 99, hits = 0;
     const baseHurt = game.hurtPlayer.bind(game);
@@ -247,11 +247,11 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     ok(game.waveState === 'exit' && game.exitMarker.visible, 'после 5-й волны (босса) открылся выход');
     game.p.x = 0; game.p.z = 14.2; game.p.invuln = 1e9;
     game.update(1 / 30);
-    ok(game.locIndex === 1 && game.locDef.id === 'barrack', 'игрок прошёл в дверь — следующая локация (Барак)');
-    ok(save.locUnlocked.includes('barrack'), 'Барак открыт навсегда');
-    ok(game.wave === 0 && game.waveState === 'break' && game.npcs.length === 4, 'на новой локации новые люди и отсчёт волн с начала');
+    ok(game.locIndex === 1 && game.locDef.id === 'tank240', 'игрок прошёл в дверь — следующая локация (240-й танковый)');
+    ok(save.locUnlocked.includes('tank240'), '240-й танковый открыт навсегда');
+    ok(game.wave === 0 && game.waveState === 'break' && game.npcs.length === 6, 'на новой локации новые люди и отсчёт волн с начала');
     // последняя локация → победа
-    game.locIndex = 5; game.locDef = game.locDef; game.wave = 5; game.waveState = 'fight'; game.queue = []; game.enemies = [];
+    game.locIndex = 6; game.locDef = game.locDef; game.wave = 5; game.waveState = 'fight'; game.queue = []; game.enemies = [];
     for (let i = 0; i < 30 * 4 && game.mode !== 'over'; i++) game.update(1 / 30);
     ok(game.mode === 'over' && game.result.victory, 'после последней локации — победа');
   }
@@ -287,7 +287,7 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     game.p.x = 0; game.p.z = 10; game.p.invuln = 1e9;
     // ящик сбрасывают, когда на карте мясорубка
     game.waveState = 'fight'; game.queue = []; game.supplyT = 0;
-    for (let i = 0; i < 8; i++) game.spawnEnemy('cub', { x: -4 + i, z: -2 });
+    for (let i = 0; i < 10; i++) game.spawnEnemy('cub', { x: -5 + i, z: -2 });
     game.update(1 / 30);
     ok(game.picks.some((q: any) => q.kind === 'crate'), 'в разгар мясорубки сбросили ящик с оружием');
     const crate = game.picks.find((q: any) => q.kind === 'crate');
@@ -309,8 +309,66 @@ const bad = (game: any) => game.npcs.some((n: any) => !isFinite(n.x) || !isFinit
     game.p.ammo = 1; step(game, 1);
     ok(game.p.weapon === 'spoon', 'патроны кончились — вернулась поварёшка');
   }
+  // ---------- 5h. Дальняя комната: в каждую локацию можно дойти по коридору, там припасы
+  for (const loc of ['canteen', 'tank240', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {
+    const { game, input } = await boot(loc);
+    game.start(); game.waveState = 'break'; game.breakT = 999;
+    game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    game.spawnLoot(1);
+    const crate = game.picks.find((q: any) => q.kind === 'crate');
+    game.p.x = 0; game.p.z = 12; game.p.invuln = 1e9;
+    const tx = crate ? crate.x : 0, tz = crate ? crate.z : -35;
+    let reached = false;
+    const doorX = game.level.shelters.length ? 0 : 0;
+    void doorX;
+    const { resolveCircle: rc, ARENA: AR } = await import('../src/level');
+    const cell = 0.5, W = Math.round((AR.hx * 2) / cell), H = Math.round((AR.zMax - AR.zMin) / cell);
+    const tmp2 = { x: 0, z: 0 };
+    const blocked = (gx: number, gz: number) => { const x = -AR.hx + (gx + 0.5) * cell, z = AR.zMin + (gz + 0.5) * cell; rc(x, z, 0.6, game.level.obstacles, tmp2); return Math.hypot(tmp2.x - x, tmp2.z - z) > 0.02; };
+    let path: [number, number][] = [], pathAge = 99;
+    const plan = () => {
+      const toCell = (x: number, z: number) => [Math.max(0, Math.min(W - 1, Math.floor((x + AR.hx) / cell))), Math.max(0, Math.min(H - 1, Math.floor((z - AR.zMin) / cell)))];
+      const [sx, sz] = toCell(game.p.x, game.p.z), [ex, ez] = toCell(tx, tz);
+      const prev = new Int32Array(W * H).fill(-1); const q = [sz * W + sx]; prev[sz * W + sx] = sz * W + sx;
+      while (q.length) {
+        const cur = q.shift()!; const cx = cur % W, cz = (cur / W) | 0;
+        if (cx === ex && cz === ez) break;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = cx + dx, nz = cz + dz;
+          if (nx < 0 || nz < 0 || nx >= W || nz >= H || prev[nz * W + nx] >= 0 || blocked(nx, nz)) continue;
+          prev[nz * W + nx] = cur; q.push(nz * W + nx);
+        }
+      }
+      path = [];
+      if (prev[ez * W + ex] < 0) return;
+      for (let cur = ez * W + ex; cur !== sz * W + sx; cur = prev[cur]) path.push([-AR.hx + ((cur % W) + 0.5) * cell, AR.zMin + (((cur / W) | 0) + 0.5) * cell]);
+      path.reverse();
+    };
+    input.vector = (o: any) => {
+      if (pathAge > 20) { plan(); pathAge = 0; } pathAge++;
+      const look = path[Math.min(path.length - 1, 4)];
+      if (!look) { o.x = 0; o.z = 0; return; }
+      const dx = look[0] - game.p.x, dz = look[1] - game.p.z, l = Math.hypot(dx, dz) || 1; o.x = dx / l; o.z = dz / l;
+    };
+    for (let i = 0; i < 30 * 40; i++) { game.update(1 / 30); if (game.p.z < -30) { reached = true; break; } }
+    ok(reached && game.picks.some((q: any) => q.kind === 'crate' || q.kind === 'ammo'), loc + ': есть путь из зала по коридору в дальнюю комнату — дошёл (z=' + game.p.z.toFixed(1) + ', путь найден: ' + (path.length > 0) + ')');
+  }
+  // ---------- 5i. 240-й танковый: танки гоняют по плацу и давят
+  {
+    const { game } = await boot('tank240');
+    game.start(); game.waveState = 'break'; game.breakT = 999;
+    game.npcs.forEach((n: any) => { n.state = 'dead'; game.scene.remove(n.rig.root); });
+    ok(game.level.saws.length === 2 && game.level.saws.every((s: any) => !s.spin), 'на плацу два танка');
+    const t = game.level.saws[0];
+    game.p.invuln = 0; game.p.x = t.x; game.p.z = t.z; t.dir = 0; t.speed = 0;
+    const hp0 = game.p.hp; game.update(1 / 30);
+    ok(game.p.hp < hp0 && String(game.sawTitle).includes('танк'), 'танк давит игрока (' + Math.round(hp0 - game.p.hp) + ' урона)');
+    const e = game.spawnEnemy('bear', { x: t.x, z: t.z }); const eh = e.hp;
+    game.update(1 / 30); step(game, 0.5);
+    ok(e.dead || e.hp < eh, 'танк давит и медведей');
+  }
   // ---------- 6. Длинный прогон со всеми локациями: нет исключений и NaN
-  for (const loc of ['canteen', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {
+  for (const loc of ['canteen', 'tank240', 'barrack', 'village', 'sawmill', 'banya', 'podezd']) {
     const { game, input } = await boot(loc);
     game.start();
     let nan = false;

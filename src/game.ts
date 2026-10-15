@@ -65,6 +65,7 @@ function npcDef(outfit: string, kind: NpcKind): CharDef {
   const base = { name: '', emoji: '', desc: '', cost: 0, skin: 0xe8c09a, hp: 1, speed: 1, rate: 1, dmg: 1, hitR: 0.4 };
   const shirt = { coward: 0x4a4e54, brave: 0x8a2a2a, helper: 0x2a7a4a }[kind];
   if (outfit === 'convict') return { ...base, id: 'npc_convict_' + kind, shirt, pants: 0x34383e, hat: 'kepka', stripes: 'tel' };
+  if (outfit === 'soldier') return { ...base, id: 'npc_soldier_' + kind, shirt: kind === 'coward' ? 0x5a6a3a : kind === 'brave' ? 0x6a3a2a : 0x2a5a4a, pants: 0x3a4a2a, hat: 'kepka', stripes: kind === 'brave' ? 'tel' : 'none' };
   if (outfit === 'village') return { ...base, id: 'npc_village_' + kind, shirt: kind === 'coward' ? 0x8a3b9a : kind === 'brave' ? 0xb05a2a : 0x3a6aa0, pants: 0x4a3a2a, hat: kind === 'coward' ? 'platok' : 'ushanka', stripes: 'none' };
   return { ...base, id: 'npc_civil_' + kind, shirt: kind === 'coward' ? 0x7a8a5a : kind === 'brave' ? 0xb05a2a : 0x3a6aa0, pants: 0x3a3a48, hat: kind === 'coward' ? 'panama' : 'kepka', stripes: 'none' };
 }
@@ -173,11 +174,13 @@ export class Game {
   private continuesLeft = 0;
   private finished = false;
   private chooseKind: 'upgrade' | 'weapon' = 'upgrade';
-  private supplyT = 20;
+  private supplyT = 45;
   private locIndex = 0;
   private exitMarker: THREE.Group = new THREE.Group();
   private victory = false;
   private exitOpen = false;
+  private camZ = 0;
+  private sawTitle = '';
   private lockT = 0;
   private deathT = 0;
   private result: RunResult | null = null;
@@ -401,6 +404,7 @@ export class Game {
     this.rebuildLevel();
     this.spawnNpcs();
     this.items = { frag: 2, smoke: 1, decoy: 1, net: 1 }; this.itemCd = 0;
+    this.supplyT = 45; this.camZ = 0;
     this.continuesLeft = continuesFor(save.bestWave); this.finished = false; this.lockT = 0; this.npcLost = 0;
     audio.init();
     const def = CHARS.find(c => c.id === save.selected) ?? CHARS[0];
@@ -437,7 +441,7 @@ export class Game {
       this.events.banner('ХОДИ ПАЛЬЦЕМ', 'Стреляешь сам. Справа — БОРЩ-БОМБА!', 'info');
       save.tutorialSeen = true; commit();
     } else {
-      this.events.banner('КРОВАВЫЙ ОБЕД', 'Столовая №7 открыта. Приятного аппетита!', 'info');
+      this.events.banner(this.locDef.emoji + ' ' + this.locDef.name.toUpperCase(), 'Цель: 5 волн → дальше «' + (LOCATIONS[this.locIndex + 1]?.name ?? 'победа') + '»', 'info');
     }
   }
 
@@ -636,7 +640,7 @@ export class Game {
     let rank = RANKS[0][1];
     for (const [w, name] of RANKS) if (wave >= w) rank = name;
     this.result = {
-      score: p.score, wave, kills: p.kills, coins, lvl: p.lvl, title: this.victory ? 'ВСЕ ЛОКАЦИИ ЗАЧИЩЕНЫ' : this.killer === 'saw' ? 'Распилен на доски. Сам виноват.' : pick(ENEMIES[this.killer].killedBy), loc: this.locDef.name, victory: this.victory, rank, joke: pick(DEATH_JOKES),
+      score: p.score, wave, kills: p.kills, coins, lvl: p.lvl, title: this.victory ? 'ВСЕ ЛОКАЦИИ ЗАЧИЩЕНЫ' : this.killer === 'saw' ? this.sawTitle || 'Распилен на доски. Сам виноват.' : pick(ENEMIES[this.killer].killedBy), loc: this.locDef.name, victory: this.victory, rank, joke: pick(DEATH_JOKES),
       newBest: p.score > prevBest, time: this.runTime,
     };
     audio.setIntense(false);
@@ -666,12 +670,25 @@ export class Game {
     return q;
   }
 
+  /** Припасы лежат в дальней комнате: чтобы их взять, надо пройти по коридору. */
+  private spawnLoot(w: number): void {
+    const spots = this.level.loot;
+    if (!spots.length) return;
+    if (w === 1) {
+      this.addPickup('crate', spots[0].x, spots[0].z, 1);
+      this.say('В дальней комнате лежит ящик с оружием — иди по коридору наверх!', 'sys', true);
+    }
+    const have = this.picks.filter(q => q.kind === 'ammo').length;
+    for (let i = have; i < 2; i++) { const s = pick(spots); this.addPickup('ammo', s.x + (Math.random() - 0.5), s.z + (Math.random() - 0.5), Math.floor(Math.random() * 4)); }
+  }
+
   private startWave(): void {
     this.wave++;
     const w = this.wave;
     this.waveState = 'fight';
     for (const n of this.npcs) if (n.state === 'dead') this.reviveNpc(n);
-    if (w >= 2 && w < WAVES_PER_LOC && Math.random() < 0.4 && !this.picks.some(q => q.kind === 'crate')) this.dropCrate(false);
+    this.spawnLoot(w);
+    if (w >= 2 && w < WAVES_PER_LOC && Math.random() < 0.15 && !this.picks.some(q => q.kind === 'crate')) this.dropCrate(false);
     this.queue = this.buildQueue(w);
     this.spawnGap = Math.max(0.55, 1.35 - this.stage() * 0.035);
     this.spawnT = 0.6;
@@ -761,7 +778,7 @@ export class Game {
       return;
     }
     this.supplyT -= dt;
-    if (this.supplyT <= 0 && this.aliveCount() >= 7 && !this.picks.some(q => q.kind === 'crate')) { this.dropCrate(true); this.supplyT = 28; }
+    if (this.supplyT <= 0 && this.aliveCount() >= 9 && !this.picks.some(q => q.kind === 'crate')) { this.dropCrate(true); this.supplyT = 65; }
     this.spawnT -= dt;
     const cap = this.wave === WAVES_PER_LOC ? 9 + Math.min(this.locIndex, 3) : 8 + Math.min(this.locIndex * 2, 6);
     const alive = this.aliveCount();
@@ -1069,7 +1086,7 @@ export class Game {
     this.shake = 0.8; audio.play('roar');
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      this.spawnEnemy('cub', { x: Math.max(-5.5, Math.min(5.5, boss.x + Math.sin(a) * 2.4)), z: Math.max(-14, Math.min(14, boss.z + Math.cos(a) * 2.4)) });
+      this.spawnEnemy('cub', { x: Math.max(-5.5, Math.min(5.5, boss.x + Math.sin(a) * 2.4)), z: Math.max(ARENA.zMin + 1, Math.min(ARENA.zMax - 1, boss.z + Math.cos(a) * 2.4)) });
     }
   }
 
@@ -1134,7 +1151,7 @@ export class Game {
     const lowBonus = this.p.hp < this.stats.maxHp * 0.4 ? 0.05 : 0;
     if (Math.random() < 0.05 + lowBonus) this.addPickup('pie', e.x, e.z, 1);
     if (def.id !== 'cub' && Math.random() < 0.05) this.addPickup('ammo', e.x, e.z, Math.floor(Math.random() * 4));
-    if (def.boss || (!this.mods?.extOnly && !this.p.fixedWeapon && Math.random() < 0.03)) this.addPickup('crate', e.x, e.z, 1);
+    if (def.boss || (!this.mods?.extOnly && !this.p.fixedWeapon && Math.random() < 0.012)) this.addPickup('crate', e.x, e.z, 1);
   }
 
   // ---------------------------------------------------------------- снаряды
@@ -1142,7 +1159,7 @@ export class Game {
     for (let i = this.projs.length - 1; i >= 0; i--) {
       const q = this.projs[i];
       q.x += q.vx * dt; q.z += q.vz * dt; q.life -= dt;
-      let remove = q.life <= 0 || Math.abs(q.x) > ARENA.hx || Math.abs(q.z) > ARENA.hz;
+      let remove = q.life <= 0 || Math.abs(q.x) > ARENA.hx || q.z < ARENA.zMin || q.z > ARENA.zMax;
       if (!remove) {
         const rr = q.w.size * 0.5;
         for (const e of this.enemies) {
@@ -1205,7 +1222,7 @@ export class Game {
     for (let i = this.eshots.length - 1; i >= 0; i--) {
       const s = this.eshots[i];
       s.x += s.vx * dt; s.z += s.vz * dt; s.life -= dt;
-      let remove = s.life <= 0 || Math.abs(s.x) > ARENA.hx + 0.5 || Math.abs(s.z) > ARENA.hz + 0.5;
+      let remove = s.life <= 0 || Math.abs(s.x) > ARENA.hx + 0.5 || s.z < ARENA.zMin - 0.5 || s.z > ARENA.zMax + 0.5;
       if (!remove && (s.x - p.x) ** 2 + (s.z - p.z) ** 2 < (p.r + 0.3) ** 2) {
         this.hurtPlayer(s.dmg, s.kind, s.x - s.vx, s.z - s.vz);
         remove = true;
@@ -1241,7 +1258,7 @@ export class Game {
       if (d < best) { best = d; target = e; }
     }
     if (target) { tx = target.x; tz = target.z; }
-    tx = Math.max(-ARENA.hx + 0.5, Math.min(ARENA.hx - 0.5, tx)); tz = Math.max(-ARENA.hz + 0.5, Math.min(ARENA.hz - 0.5, tz));
+    tx = Math.max(-ARENA.hx + 0.5, Math.min(ARENA.hx - 0.5, tx)); tz = Math.max(ARENA.zMin + 0.5, Math.min(ARENA.zMax - 0.5, tz));
     this.bomb = { x0: p.x, z0: p.z, x1: tx, z1: tz, t: 0, dur: 0.55 };
     this.bombActive = true; this.bombMesh.visible = true;
     p.bombCd = BOMB_CD * this.stats.bombCd;
@@ -1280,11 +1297,12 @@ export class Game {
     for (const s of this.level.saws) {
       s.x += s.dir * s.speed * dt;
       if (Math.abs(s.x) > s.range) { s.x = Math.sign(s.x) * s.range; s.dir *= -1; }
-      s.mesh.position.x = s.x; s.mesh.rotation.y += dt * 24;
-      if (this.mode === 'play' && (s.x - p.x) ** 2 + (s.z - p.z) ** 2 < (s.r + p.r * 0.8) ** 2) this.hurtPlayer(14, 'saw', s.x, s.z);
+      s.mesh.position.x = s.x;
+      if (s.spin) s.mesh.rotation.y += dt * 24; else s.mesh.rotation.y = s.dir > 0 ? 0 : Math.PI;
+      if (this.mode === 'play' && (s.x - p.x) ** 2 + (s.z - p.z) ** 2 < (s.r + p.r * 0.8) ** 2) { this.sawTitle = s.title; this.hurtPlayer(s.dmg, 'saw', s.x, s.z); }
       for (const e of this.enemies) {
         if (e.dead || e.sawCd > 0) continue;
-        if ((s.x - e.x) ** 2 + (s.z - e.z) ** 2 < (s.r + e.r * 0.7) ** 2) { e.sawCd = 0.45; this.hurtEnemy(e, 22, s.dir, 0, 3, false, true); }
+        if ((s.x - e.x) ** 2 + (s.z - e.z) ** 2 < (s.r + e.r * 0.7) ** 2) { e.sawCd = 0.45; this.hurtEnemy(e, s.dmgEnemy, s.dir, 0, 3, false, true); }
       }
     }
   }
@@ -1314,7 +1332,7 @@ export class Game {
       const idx = this.picks.findIndex(q => q.kind === 'coin' || q.kind === 'xp');
       if (idx >= 0) this.picks.splice(idx, 1); else return;
     }
-    this.picks.push({ kind, x: Math.max(-5.8, Math.min(5.8, x)), z: Math.max(-14.5, Math.min(14.5, z)), t: Math.random() * 6, val });
+    this.picks.push({ kind, x: Math.max(-5.8, Math.min(5.8, x)), z: Math.max(ARENA.zMin + 0.5, Math.min(ARENA.zMax - 0.5, z)), t: Math.random() * 6, val });
   }
 
   private updatePickups(dt: number): void {
@@ -1426,9 +1444,9 @@ export class Game {
     const p = this.p;
     for (let i = 0; i < 12; i++) {
       const a = Math.random() * Math.PI * 2, d = 3 + Math.random() * 3;
-      const x = near ? p.x + Math.cos(a) * d : (Math.random() - 0.5) * 10, z = near ? p.z + Math.sin(a) * d : (Math.random() - 0.5) * 24;
+      const x = near ? p.x + Math.cos(a) * d : (Math.random() - 0.5) * 10, z = near ? p.z + Math.sin(a) * d : ARENA.zMin + 1.5 + Math.random() * (ARENA.zMax - ARENA.zMin - 3);
       resolveCircle(x, z, 0.7, this.level.obstacles, tmp);
-      if (Math.hypot(tmp.x - x, tmp.z - z) > 0.05 || Math.abs(x) > ARENA.hx - 0.8 || Math.abs(z) > ARENA.hz - 0.8) continue;
+      if (Math.hypot(tmp.x - x, tmp.z - z) > 0.05 || Math.abs(x) > ARENA.hx - 0.8 || z < ARENA.zMin + 0.8 || z > ARENA.zMax - 0.8) continue;
       this.addPickup('crate', x, z, 1);
       if (near) { this.events.banner('СБРОСИЛИ ЯЩИК!', 'Хватай оружие: базука, Максим…', 'event'); this.say('Подмога! Ящик с оружием!', 'sys', true); audio.play('wave'); }
       else this.say('Где-то на карте лежит ящик с оружием!', 'sys');
@@ -1633,7 +1651,7 @@ export class Game {
     let ax = n.x - thr.x, az = n.z - thr.z;
     const l = Math.hypot(ax, az) || 1; ax /= l; az /= l;
     if (Math.abs(n.x) > ARENA.hx - 1.6) ax -= Math.sign(n.x) * 1.2;
-    if (Math.abs(n.z) > ARENA.hz - 1.6) az -= Math.sign(n.z) * 1.2;
+    if (n.z < ARENA.zMin + 1.6) az += 1.2; else if (n.z > ARENA.zMax - 1.6) az -= 1.2;
     return [ax, az];
   }
 
@@ -1648,7 +1666,7 @@ export class Game {
       let dx = cx - thr.x, dz = cz - thr.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
       const k = Math.max(hw, hd) + 0.9;
       const x = cx + dx * k, z = cz + dz * k;
-      if (Math.abs(x) > ARENA.hx - 0.6 || Math.abs(z) > ARENA.hz - 0.6) continue;
+      if (Math.abs(x) > ARENA.hx - 0.6 || z < ARENA.zMin + 0.6 || z > ARENA.zMax - 0.6) continue;
       resolveCircle(x, z, n.r, this.level.obstacles, tmp);
       if (Math.hypot(tmp.x - x, tmp.z - z) > 0.05) continue;
       const d = Math.hypot(x - n.x, z - n.z);
@@ -1833,7 +1851,7 @@ export class Game {
     const n = pick(alive);
     for (let i = 0; i < 2; i++) {
       const a = Math.random() * Math.PI * 2;
-      const x = Math.max(-5.5, Math.min(5.5, n.x + Math.cos(a) * 4)), z = Math.max(-14, Math.min(14, n.z + Math.sin(a) * 4));
+      const x = Math.max(-5.5, Math.min(5.5, n.x + Math.cos(a) * 4)), z = Math.max(ARENA.zMin + 1, Math.min(ARENA.zMax - 1, n.z + Math.sin(a) * 4));
       this.spawnEnemy(this.stage() >= 3 ? 'bear' : 'cub', { x, z });
     }
     this.say('Медведь из коридора! Спасай людей!', 'sys', true);
@@ -1957,7 +1975,7 @@ export class Game {
         }
       }
     } else if (kind === 'net') { this.say('Некого ловить!', 'sys', true); return; }
-    x1 = Math.max(-ARENA.hx + 0.6, Math.min(ARENA.hx - 0.6, x1)); z1 = Math.max(-ARENA.hz + 0.6, Math.min(ARENA.hz - 0.6, z1));
+    x1 = Math.max(-ARENA.hx + 0.6, Math.min(ARENA.hx - 0.6, x1)); z1 = Math.max(ARENA.zMin + 0.6, Math.min(ARENA.zMax - 0.6, z1));
     const mesh = this.gPool.find(m => !m.visible);
     if (!mesh) return;
     this.items[kind]--; this.itemCd = 0.9;
@@ -2099,7 +2117,7 @@ export class Game {
     this.spawnNpcs();
     this.exitOpen = false; this.exitMarker.visible = false;
     const p = this.p;
-    p.x = 0; p.z = ARENA.hz - 3.2; p.kx = p.kz = 0; p.invuln = 2.5; p.face = Math.PI;
+    p.x = 0; p.z = ARENA.zMax - 3.2; p.kx = p.kz = 0; p.invuln = 2.5; p.face = Math.PI;
     p.hp = Math.min(this.stats.maxHp, p.hp + this.stats.maxHp * 0.4);
     this.wave = 0; this.waveState = 'break'; this.breakT = 3.5; this.queue = []; this.event = null; this.lockT = 0;
     this.zoomKick = 0.5;
@@ -2136,7 +2154,7 @@ export class Game {
     };
     if (margin(x, z) > 0) return { x, z };
     let best = { x: 0, z: 10 }, bs = -1e9;
-    for (let gx = -5; gx <= 5; gx += 1.25) for (let gz = -13.5; gz <= 13.5; gz += 1.5) {
+    for (let gx = -5; gx <= 5; gx += 1.25) for (let gz = ARENA.zMin + 1.5; gz <= ARENA.zMax - 1.5; gz += 1.5) {
       const m = margin(gx, gz);
       if (m < 0) continue;
       const s = Math.min(m, 10) - 0.25 * Math.hypot(gx - x, gz - z);
@@ -2229,14 +2247,18 @@ export class Game {
     if (this.camMode === 'chase') {
       const p = this.p, fx = Math.sin(this.camYaw), fz = Math.cos(this.camYaw);
       const back = 6.4 - this.zoomKick * 2.2;
-      const lim = ARENA.hx - 0.4, limZ = ARENA.hz - 0.4;
+      const lim = ARENA.hx - 0.4;
       const cx = Math.max(-lim, Math.min(lim, p.x - fx * back));
-      const cz = Math.max(-limZ, Math.min(limZ, p.z - fz * back));
+      const cz = Math.max(ARENA.zMin + 0.4, Math.min(ARENA.zMax - 0.4, p.z - fz * back));
       this.camera.position.set(cx + sx, 4.6 + this.zoomKick, cz + sz);
       this.camera.lookAt(p.x + fx * 5, 1.2, p.z + fz * 5);
       return;
     }
-    const tz = this.p.z * 0.22;
+    const visHalf = (this.camDist * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.sin(this.tilt);
+    const lo = ARENA.zMin + visHalf - 2, hi = ARENA.zMax - visHalf + 2;
+    const want = lo > hi ? (ARENA.zMin + ARENA.zMax) / 2 : Math.max(lo, Math.min(hi, this.p.z - 2));
+    this.camZ += (want - this.camZ) * Math.min(1, real * 4);
+    const tz = this.camZ;
     const px = this.zoomKick > 0 ? this.p.x * this.zoomKick * 0.5 : 0;
     this.camera.position.set(sx + px, dist * Math.sin(this.tilt), tz + dist * Math.cos(this.tilt) + sz);
     this.camera.lookAt(px, 0, tz);

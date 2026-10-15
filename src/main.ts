@@ -11,7 +11,7 @@ const game = new Game(canvas, input);
 ui.bind(game, input);
 audio.muted = save.muted;
 game.showMenu();
-ui.menu();
+ui.boot();
 
 // звук можно запускать только после жеста пользователя
 const unlock = () => { audio.init(); audio.startMusic(); };

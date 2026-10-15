@@ -113,6 +113,8 @@ export class UI implements GameEvents {
         if (save.locUnlocked.includes(l.id)) { g.setLocation(l.id); save.loc = l.id; commit(); }
         this.locsScreen(); break;
       }
+      case 'howto': this.howto(Number(arg) || 0); break;
+      case 'howtoDone': save.howtoSeen = true; commit(); this.menu(); break;
       case 'cont': this.screens.innerHTML = ''; g.continueRun(); break;
       case 'endrun': this.screens.innerHTML = ''; g.endRun(); break;
       case 'weapon': this.screens.innerHTML = ''; g.pickWeapon(arg); break;
@@ -145,6 +147,25 @@ export class UI implements GameEvents {
   }
 
   // ------------------------------------------------------------ экраны
+  /** Первый запуск — сначала объясняем, как играть. */
+  boot(): void { if (!save.howtoSeen) this.howto(0); else this.menu(); }
+
+  private howto(page: number): void {
+    const pages: [string, string, string][] = [
+      ['🎯', 'ЦЕЛЬ', 'Ты повар, а медведи лезут отовсюду. На каждой локации <b>5 волн</b>, пятая — с боссом.<br><br>После босса <b>внизу загорается золотая дверь ⬇</b> — иди в неё, и ты в следующей локации.<br><br>Путь: Столовая → 240-й танковый → Барак → Деревня → Лесопилка → Баня → Подъезд.'],
+      ['🕹️', 'УПРАВЛЕНИЕ', '<b>Левый палец</b> — куда нажал, туда идёшь. Стреляет герой <b>сам</b>, по ближайшему медведю.<br><br>Справа внизу большая кнопка <b>🍲 БОРЩ-БОМБА</b>: взрыв и лужа, медведи замирают.<br><br>Над ней <b>4 гранаты</b>: 💣 осколочная, 🌫️ дым, 📻 приманка (медведи бегут на неё), 🕸️ сеть. Тап — и бросок.'],
+      ['⭐', 'ПРОКАЧКА', 'Убил медведей — набрал уровень. Справа загорается <b>⭐ ПРОКАЧКА</b>: нажми и выбери усиление.<br><br>Игра при этом встаёт на паузу, можно не спешить. Очки копятся, тратить можно в любой момент.'],
+      ['💀', 'ДОБИВАНИЕ', 'Когда медведь упал на колени и мигает красным — жми красную кнопку <b>💀 ДОБЕЙ ЕГО!</b>.<br><br>Это фаталити: красивое добивание, очки, монеты и немного здоровья.'],
+      ['📦', 'ОРУЖИЕ И КОМНАТЫ', 'Из ящиков падает тяжёлое оружие: <b>базука, пулемёт Максим, двустволка, огнемёт</b>. Патроны кончились — снова поварёшка.<br><br>В каждой локации от зала вверх идёт <b>коридор в дальнюю комнату</b>: там лежит ящик и припасы. В коридоре медведям тесно — заманивай их туда.'],
+      ['🏚️', 'ЛЮДИ И УКРЫТИЯ', 'Зэки и жители прячутся от медведей. <b>Подбеги к упавшему</b> — он встанет и станет твоим помощником.<br><br>В будки можно заходить самому: дверь откроется и закроется за тобой, внутри ты лечишься. Но медведи ломают дверь — долго не просидишь.'],
+    ];
+    const [icon, title, text] = pages[page];
+    const last = page === pages.length - 1;
+    this.screens.innerHTML = `<div class="screen center howto"><div class="hbig">${icon}</div><h2>${title}</h2><p class="htext">${text}</p>
+      <p class="hint">${page + 1} / ${pages.length}</p>
+      ${last ? '<button class="btn big" data-act="howtoDone">ПОНЯТНО, ПОЕХАЛИ!</button>' : `<button class="btn big" data-act="howto" data-arg="${page + 1}">ДАЛЬШЕ ▶</button><button class="btn sm" data-act="howtoDone">ПРОПУСТИТЬ</button>`}</div>`;
+  }
+
   menu(toast = ''): void {
     const c = CHARS.find(x => x.id === save.selected) ?? CHARS[0];
     const m = todayMutator();
@@ -166,6 +187,7 @@ export class UI implements GameEvents {
         <div class="row">
           <button class="btn" data-act="chars">🧍 ГЕРОИ</button>
           <button class="btn" data-act="scores">🏆 РЕКОРДЫ</button>
+          <button class="btn sq" data-act="howto" data-arg="0">❓</button>
           <button class="btn sq" data-act="sound">${save.muted ? '🔇' : '🔊'}</button>
         </div>
       </div>`;

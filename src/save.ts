@@ -27,6 +27,7 @@ export interface SaveData {
   locUnlocked: string[];
   bestWave: number;
   locFix?: boolean;
+  howtoSeen?: boolean;
 }
 
 const KEY = 'medvedokalipsis_save_v1';

@@ -19,10 +19,11 @@ export interface Shelter {
 }
 export type NpcKind = 'coward' | 'brave' | 'helper';
 export interface NpcSpawn { x: number; z: number; kind: NpcKind }
-export const ARENA = { hx: 6.2, hz: 15 };
+export const ARENA = { hx: 6.2, hz: 15, zMin: -15, zMax: 15 };
+export const ANNEX_LEN = 24;
 const { hx, hz } = ARENA;
 
-export interface Saw { mesh: THREE.Mesh; x: number; z: number; r: number; dir: number; speed: number; range: number }
+export interface Saw { mesh: THREE.Mesh; x: number; z: number; r: number; dir: number; speed: number; range: number; spin: boolean; dmg: number; dmgEnemy: number; title: string }
 export interface Level {
   obstacles: AABB[];
   spawns: { x: number; z: number }[];
@@ -30,7 +31,9 @@ export interface Level {
   saws: Saw[];
   shelters: Shelter[];
   npcs: NpcSpawn[];
-  outfit: 'convict' | 'civil' | 'village';
+  outfit: 'convict' | 'civil' | 'village' | 'soldier';
+  loot: { x: number; z: number }[];
+  gateX: number;
   anim: ((t: number) => void) | null;
   dispose(): void;
 }
@@ -41,6 +44,7 @@ export interface LocDef {
 
 export const LOCATIONS: LocDef[] = [
   { id: 'canteen', name: 'Столовая №7', emoji: '🍲', desc: 'Плитка, компот и очередь за добавкой.', cost: 0, bg: 0x1a1020, sky: 0xffffff, ground: 0x8a7a68, hemi: 1.25, sun: 1.3, dogs: false },
+  { id: 'tank240', name: '240-й танковый полк', emoji: '🪖', desc: 'Хабаровск. Плац, КПП, столовая, казарма роты. Танки гоняют по плацу!', cost: 0, bg: 0xa8b4bc, sky: 0xeaf2ff, ground: 0x7a7a70, hemi: 1.45, sun: 1.2, dogs: false },
   { id: 'barrack', name: 'Барак', emoji: '🛏️', desc: 'Советский барак: двухъярусные койки и буржуйка.', cost: 150, bg: 0x140d08, sky: 0xffe2b0, ground: 0x6a5238, hemi: 1.1, sun: 1.0, dogs: false },
   { id: 'village', name: 'Деревня зимой', emoji: '🏚️', desc: 'Сугробы, сарай, колодец. Медведи и бешеные собаки.', cost: 300, bg: 0x9fb8d6, sky: 0xdce8ff, ground: 0x9aa8b8, hemi: 1.55, sun: 1.2, dogs: true },
   { id: 'sawmill', name: 'Лесопилка', emoji: '🪚', desc: 'Зэки пилят дрова, пилы ездят по рельсам. Осторожно!', cost: 500, bg: 0x1a1812, sky: 0xfff0d0, ground: 0x7a6a48, hemi: 1.2, sun: 1.25, dogs: false },
@@ -52,13 +56,14 @@ type Geo = THREE.BufferGeometry;
 interface Ctx {
   scene: THREE.Scene; group: THREE.Group; parts: Geo[]; obstacles: AABB[]; spawns: { x: number; z: number }[];
   saws: Saw[]; anims: ((t: number) => void)[];
-  shelters: Shelter[]; npcs: NpcSpawn[]; cur: Geo[] | null; outfit: 'convict' | 'civil' | 'village';
+  shelters: Shelter[]; npcs: NpcSpawn[]; cur: Geo[] | null; outfit: 'convict' | 'civil' | 'village' | 'soldier';
+  annexX: number | null; ext: number; loot: { x: number; z: number }[];
 }
 
-function ctx(scene: THREE.Scene): Ctx {
+function ctx(scene: THREE.Scene, annexX: number | null = null): Ctx {
   const group = new THREE.Group();
   scene.add(group);
-  return { scene, group, parts: [], obstacles: [], spawns: [], saws: [], anims: [], shelters: [], npcs: [], cur: null, outfit: 'civil' };
+  return { scene, group, parts: [], obstacles: [], spawns: [], saws: [], anims: [], shelters: [], npcs: [], cur: null, outfit: 'civil', annexX, ext: annexX === null ? 0 : ANNEX_LEN, loot: [] };
 }
 const P = (c: Ctx, w: number, h: number, d: number, x: number, y: number, z: number, col: number) => { (c.cur ?? c.parts).push(box(w, h, d, x, y, z, col)); };
 /** Ломаемый предмет: собирается в отдельный меш, медведи могут его разнести. */
@@ -116,6 +121,7 @@ function signAt(c: Ctx, text: string, w: number, h: number, bg: string, fg: stri
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex }));
+  if (c.annexX !== null && z < -hz + 0.5 && z > -hz - 0.5 && Math.abs(x - c.annexX) < w / 2 + 1.9) x = c.annexX >= 0 ? -(1.9 + w / 2 + 0.2) : 1.9 + w / 2 + 0.2;
   m.position.set(x, y, z); m.rotation.y = rotY;
   c.group.add(m);
 }
@@ -130,18 +136,20 @@ function floor(c: Ctx, a: string, b: string, grout: string, speckle = false): vo
   if (speckle) for (let i = 0; i < 260; i++) { g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,.7)' : 'rgba(150,170,200,.25)'; g.fillRect(Math.random() * 128, Math.random() * 128, 3, 3); }
   const tex = new THREE.CanvasTexture(fc);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(hx, hz);
+  tex.repeat.set(hx, (hz * 2 + c.ext) / 2);
   tex.magFilter = THREE.NearestFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
-  const f = new THREE.Mesh(new THREE.PlaneGeometry(hx * 2 + 4, hz * 2 + 4), new THREE.MeshLambertMaterial({ map: tex }));
-  f.rotation.x = -Math.PI / 2;
+  const f = new THREE.Mesh(new THREE.PlaneGeometry(hx * 2 + 4, hz * 2 + 4 + c.ext), new THREE.MeshLambertMaterial({ map: tex }));
+  f.rotation.x = -Math.PI / 2; f.position.z = -c.ext / 2;
   c.group.add(f);
 }
 
 function walls(c: Ctx, low: number, up: number, lowH = 1.3, upH = 1.6): void {
   const T = 1;
   const w = (cx: number, cz: number, ww: number, dd: number) => { P(c, ww, lowH, dd, cx, lowH / 2, cz, low); P(c, ww, upH, dd, cx, lowH + upH / 2, cz, up); };
-  w(0, -hz - T / 2, hx * 2 + T * 2, T); w(0, hz + T / 2, hx * 2 + T * 2, T);
+  if (c.annexX === null) w(0, -hz - T / 2, hx * 2 + T * 2, T);
+  else { const g = 1.9, a = c.annexX, x1 = -hx - T, x4 = hx + T; w((x1 + a - g) / 2, -hz - T / 2, a - g - x1, T); w((a + g + x4) / 2, -hz - T / 2, x4 - a - g, T); }
+  w(0, hz + T / 2, hx * 2 + T * 2, T);
   w(-hx - T / 2, 0, T, hz * 2); w(hx + T / 2, 0, T, hz * 2);
 }
 
@@ -152,20 +160,58 @@ function windows(c: Ctx, zs: number[], glass = 0x8fd0ff, frame = 0xffffff): void
   }
 }
 function doors(c: Ctx, col: number): void {
-  P(c, 2.0, 2.2, 0.1, 0, 1.1, -hz + 0.05, col); P(c, 2.0, 2.2, 0.1, 0, 1.1, hz - 0.05, col);
-  P(c, 0.12, 0.12, 0.12, 0.7, 1.0, -hz + 0.15, 0xffd24a); P(c, 0.12, 0.12, 0.12, 0.7, 1.0, hz - 0.15, 0xffd24a);
+  if (c.annexX === null) { P(c, 2.0, 2.2, 0.1, 0, 1.1, -hz + 0.05, col); P(c, 0.12, 0.12, 0.12, 0.7, 1.0, -hz + 0.15, 0xffd24a); }
+  P(c, 2.0, 2.2, 0.1, 0, 1.1, hz - 0.05, col);
+  P(c, 0.12, 0.12, 0.12, 0.7, 1.0, hz - 0.15, 0xffd24a);
 }
 function sideSpawns(c: Ctx): void {
   for (const z of [-12, -6, 0, 6, 12]) { c.spawns.push({ x: -hx + 0.8, z }, { x: hx - 0.8, z }); }
-  c.spawns.push({ x: 0, z: -hz + 2.6 });
+  if (c.annexX === null) c.spawns.push({ x: 0, z: -hz + 2.6 });
 }
+
+type PropDef = [number, number, number, number, number, number, number]; // x, z, полуширина, полуглубина, высота, цвет, прочность
+interface AnnexTheme { wall: number; accent: number; sign: string; props: PropDef[]; npcs: [number, number, NpcKind][]; loot: [number, number][] }
+
+/** Коридор от зала на север и дальняя комната: можно убегать, заманивать, искать припасы. */
+function addAnnex(c: Ctx, th: AnnexTheme): void {
+  const dx = c.annexX ?? 0, g = 1.9, zc = -hz - 8, zEnd = -hz - ANNEX_LEN;
+  for (const [x1, x2] of [[-hx - 1, dx - g], [dx + g, hx + 1]]) {
+    if (x2 - x1 < 0.1) continue;
+    P(c, x2 - x1, 3.2, 8, (x1 + x2) / 2, 1.6, (-hz + zc) / 2, th.wall);
+    c.obstacles.push({ minX: x1, maxX: x2, minZ: zc, maxZ: -hz });
+  }
+  const len = ANNEX_LEN - 8, mid = (zc + zEnd) / 2;
+  P(c, 0.5, 3.0, len, -hx - 0.25, 1.5, mid, th.wall); P(c, 0.5, 3.0, len, hx + 0.25, 1.5, mid, th.wall);
+  P(c, hx * 2 + 1, 3.0, 0.5, 0, 1.5, zEnd - 0.25, th.wall);
+  windows(c, [-30, -35], 0xb8d8f0, 0x8a8a8a);
+  for (const [x, z, hw, hd, h, col, hp] of th.props) {
+    startProp(c);
+    P(c, hw * 2, h, hd * 2, x, h / 2, z, col); P(c, hw * 1.7, 0.12, hd * 1.7, x, h + 0.06, z, th.accent);
+    endProp(c, x, z, hw, hd, hp, col);
+  }
+  signAt(c, th.sign, 5, 1.3, '#26262e', '#ffd24a', 0, 2.5, zEnd + 0.12, 0, 28);
+  signAt(c, 'ПРОХОД', 2.2, 0.8, '#26262e', '#ffd24a', dx, 2.7, -hz - 0.6, 0, 30);
+  for (const z of [-29, -35]) c.spawns.push({ x: -hx + 0.8, z }, { x: hx - 0.8, z });
+  for (const [x, z, k] of th.npcs) c.npcs.push({ x, z, kind: k });
+  for (const [x, z] of th.loot) c.loot.push({ x, z });
+}
+
+const THEMES: Record<string, AnnexTheme> = {
+  canteen: { wall: 0x8a9096, accent: 0xe0e4e8, sign: 'КУХНЯ\nПОСТОРОННИМ ВХОД ЗАПРЕЩЁН', props: [[-4.2, -27, 1.6, 0.9, 0.9, 0x9aa0a6, 60], [4.2, -27, 1.6, 0.9, 0.9, 0x9aa0a6, 60], [-4.2, -32, 1.6, 0.9, 0.9, 0x9aa0a6, 60], [4.2, -32, 1.6, 0.9, 0.9, 0x9aa0a6, 60], [0, -36, 3.0, 0.7, 1.0, 0xb8c0c8, 80]], npcs: [[-2, -30, 'coward'], [1.6, -31.5, 'brave']], loot: [[-1.8, -33.5], [1.8, -33.5], [0, -26.5]] },
+  barrack: { wall: 0x5a4630, accent: 0x7a7a6a, sign: 'ОРУЖЕЙНАЯ КОМНАТА\nВЫДАЧА ПО ПОДПИСИ', props: [[-4.5, -28, 1.2, 1.0, 1.2, 0x5a6a3a, 50], [4.5, -27, 1.2, 1.0, 1.2, 0x5a6a3a, 50], [-4.2, -34, 1.5, 1.0, 1.0, 0x6a5a3a, 50], [4.4, -34, 1.5, 1.0, 1.0, 0x6a5a3a, 50], [0, -36.4, 2.6, 0.5, 1.6, 0x3a3a3a, 90]], npcs: [[-2, -30, 'coward'], [1.6, -31.5, 'brave']], loot: [[-1.8, -33.5], [1.8, -33.5], [0, -26.5]] },
+  village: { wall: 0x7a5a38, accent: 0xeef4fc, sign: 'АМБАР\nСЕНО · ИНВЕНТАРЬ', props: [[-4.2, -27, 1.4, 1.0, 1.1, 0xd8c060, 40], [4.3, -28, 1.4, 1.0, 1.1, 0xd8c060, 40], [-3.6, -34, 1.4, 1.0, 1.1, 0xd8c060, 40], [4.0, -34, 1.4, 1.0, 1.1, 0xd8c060, 40], [0, -36.4, 2.0, 0.9, 0.9, 0x6a4a2a, 70]], npcs: [[-2, -30, 'coward'], [1.6, -31.5, 'brave']], loot: [[0, -33.5], [0, -30], [0, -26.5]] },
+  sawmill: { wall: 0x58666f, accent: 0xe0b878, sign: 'ЦЕХ №2\nОСТОРОЖНО, ПИЛЫ', props: [[-4.3, -27, 1.8, 1.0, 0.8, 0xd8b878, 40], [4.3, -28, 1.8, 1.0, 0.8, 0xd8b878, 40], [0, -31, 0.8, 3.0, 0.5, 0x4a4a50, 100], [-4.2, -36, 1.8, 0.9, 0.8, 0xd8b878, 40]], npcs: [[-2.6, -30, 'coward'], [1.8, -31.5, 'brave']], loot: [[-1.8, -34.5], [2.2, -33.5], [0, -26.5]] },
+  banya: { wall: 0xa8783f, accent: 0xf0e0b8, sign: 'ПРЕДБАННИК\nВЕНИКИ, ЧАЙ, ПОКОЙ', props: [[-4.5, -27, 1.6, 0.5, 0.6, 0xd8aa68, 35], [4.5, -27, 1.6, 0.5, 0.6, 0xd8aa68, 35], [-4.8, -34, 0.5, 0.5, 1.1, 0x8a5a30, 35], [4.8, -34, 0.5, 0.5, 1.1, 0x8a5a30, 35], [0, -36.2, 2.0, 1.2, 0.7, 0x9a6a38, 70]], npcs: [[-2, -30, 'coward'], [1.6, -31.5, 'brave']], loot: [[-1.8, -33.5], [1.8, -33.5], [0, -26.5]] },
+  podezd: { wall: 0x6a6a68, accent: 0xc8c4b4, sign: 'ЧЕРДАК\nХЛАМ, ГОЛУБИ, ТИШИНА', props: [[-4.3, -27, 1.2, 1.0, 1.2, 0x7a5a3a, 40], [4.4, -28, 1.2, 1.0, 1.2, 0x6a6a70, 40], [-4.0, -34, 1.4, 0.9, 0.9, 0x7a5a3a, 40], [4.2, -34, 1.4, 0.9, 0.9, 0x6a6a70, 40], [0, -36.4, 2.0, 0.6, 1.8, 0x4a3a2a, 90]], npcs: [[-2, -30, 'coward'], [1.6, -31.5, 'brave']], loot: [[-1.8, -33.5], [1.8, -33.5], [0, -26.5]] },
+  tank240: { wall: 0x5a6a48, accent: 0x8a9a78, sign: 'КАЗАРМА РОТЫ\nПОДЪЁМ В 6:00', props: [[-4.6, -27, 0.9, 1.3, 0.9, 0x5a6a3a, 50], [4.6, -27, 0.9, 1.3, 0.9, 0x5a6a3a, 50], [-4.6, -32, 0.9, 1.3, 0.9, 0x5a6a3a, 50], [4.6, -32, 0.9, 1.3, 0.9, 0x5a6a3a, 50], [0, -36.4, 3.0, 0.6, 1.2, 0x6a5a3a, 80]], npcs: [[-2, -30, 'coward'], [1.6, -31.5, 'brave']], loot: [[-1.8, -33.5], [1.8, -33.5], [0, -26.5]] },
+};
 
 function finish(c: Ctx): Level {
   const mesh = new THREE.Mesh(merge(c.parts), vcMat);
   c.group.add(mesh);
   const anims = c.anims;
   return {
-    obstacles: c.obstacles, spawns: c.spawns, group: c.group, saws: c.saws, shelters: c.shelters, npcs: c.npcs, outfit: c.outfit,
+    obstacles: c.obstacles, spawns: c.spawns, group: c.group, saws: c.saws, shelters: c.shelters, npcs: c.npcs, outfit: c.outfit, loot: c.loot, gateX: c.annexX ?? 0,
     anim: anims.length ? (t: number) => { for (const f of anims) f(t); } : null,
     dispose() {
       c.scene.remove(c.group);
@@ -181,16 +227,18 @@ function finish(c: Ctx): Level {
 
 // ============================================================ СТОЛОВАЯ
 function buildCanteen(scene: THREE.Scene): Level {
-  const c = ctx(scene);
+  const c = ctx(scene, 0);
   floor(c, '#d9d3bd', '#bdb69c', '#a49d85');
   walls(c, 0x3f7a5a, 0xeee6cc);
   windows(c, [-12, -6, 0, 6, 12]);
   doors(c, 0x7a4a2a);
   const cz = -hz + 1.0;
-  P(c, 10.4, 0.9, 1.4, 0, 0.45, cz, 0x9aa0a6); P(c, 10.6, 0.1, 1.6, 0, 0.95, cz, 0xe0e4e8); P(c, 10.4, 0.08, 1.2, 0, 1.6, cz - 0.1, 0xb8d8e8);
-  O(c, 0, cz, 5.3, 0.8);
-  [-4, -2.2, -0.4, 1.4, 3.2].forEach((x, i) => { P(c, 0.8, 0.5, 0.8, x, 1.25, cz, i % 2 ? 0xc0392b : 0xd68910); P(c, 0.84, 0.08, 0.84, x, 1.54, cz, 0xcccccc); });
-  for (let i = 0; i < 4; i++) P(c, 0.26, 0.4, 0.26, 3.9 + i * 0.3, 1.2, cz + 0.2, 0x6fb7d6);
+  for (const s of [-1, 1]) {
+    P(c, 3.9, 0.9, 1.4, s * 3.7, 0.45, cz, 0x9aa0a6); P(c, 4.0, 0.1, 1.6, s * 3.7, 0.95, cz, 0xe0e4e8); P(c, 3.9, 0.08, 1.2, s * 3.7, 1.6, cz - 0.1, 0xb8d8e8);
+    O(c, s * 3.7, cz, 1.95, 0.8);
+  }
+  [-4.5, -3.0, 3.0, 4.5].forEach((x, i) => { P(c, 0.8, 0.5, 0.8, x, 1.25, cz, i % 2 ? 0xc0392b : 0xd68910); P(c, 0.84, 0.08, 0.84, x, 1.54, cz, 0xcccccc); });
+  for (let i = 0; i < 4; i++) P(c, 0.26, 0.4, 0.26, 2.6 + i * 0.3, 1.2, cz + 0.2, 0x6fb7d6);
   const trayCols = [0x3b6ea5, 0xb04a3a, 0x3b9a6a];
   for (const z of [-9, -3, 3, 9]) for (const s of [-1, 1]) {
     const x = s * 3.5;
@@ -212,16 +260,17 @@ function buildCanteen(scene: THREE.Scene): Level {
   signAt(c, 'КОМПОТ — 15₽\nДОБАВКА — НЕТ', 3.2, 1.2, '#f4efe0', '#1f4f8f', hx - 0.08, 2.4, 3, -Math.PI / 2, 32);
   signAt(c, 'ВЫХОДА НЕТ.\nТОЛЬКО БОРЩ.', 3.4, 1.1, '#2a1a1a', '#ff5a3a', 0, 2.5, hz - 0.12, Math.PI, 32);
   sideSpawns(c);
+  addAnnex(c, THEMES.canteen);
   return finish(c);
 }
 
 // ============================================================ БАРАК
 function buildBarrack(scene: THREE.Scene): Level {
-  const c = ctx(scene);
+  const c = ctx(scene, 0);
   floor(c, '#7b5b3b', '#6c4e31', '#4a3520');
   walls(c, 0x7a5a38, 0x6b4c2e, 1.4, 1.6);
   for (const y of [0.35, 0.85, 1.35, 1.85, 2.35, 2.85]) {
-    P(c, hx * 2, 0.07, 0.06, 0, y, -hz + 0.03, 0x4a331c); P(c, hx * 2, 0.07, 0.06, 0, y, hz - 0.03, 0x4a331c);
+    P(c, hx - 1.9, 0.07, 0.06, -(hx + 1.9) / 2, y, -hz + 0.03, 0x4a331c); P(c, hx - 1.9, 0.07, 0.06, (hx + 1.9) / 2, y, -hz + 0.03, 0x4a331c); P(c, hx * 2, 0.07, 0.06, 0, y, hz - 0.03, 0x4a331c);
     P(c, 0.06, 0.07, hz * 2, -hx + 0.03, y, 0, 0x4a331c); P(c, 0.06, 0.07, hz * 2, hx - 0.03, y, 0, 0x4a331c);
   }
   windows(c, [-12, -5, 5, 12], 0xb8d8f0, 0x5a3a20);
@@ -250,6 +299,7 @@ function buildBarrack(scene: THREE.Scene): Level {
   signAt(c, 'ПОРЯДОК\nИ ЧИСТОТА', 3.2, 1.2, '#e8dcc0', '#1f3f6f', -hx + 0.08, 2.4, 8, Math.PI / 2);
   signAt(c, 'НЕ КУРИТЬ!\nМЕДВЕДИ НЕ ПРОЙДУТ', 3.6, 1.2, '#ffe14a', '#222', 0, 2.5, hz - 0.12, Math.PI, 28);
   sideSpawns(c);
+  addAnnex(c, THEMES.barrack);
   return finish(c);
 }
 
@@ -259,17 +309,20 @@ function pine(c: Ctx, x: number, z: number, s: number): void {
   [[1.9, 1.0], [1.5, 1.55], [1.1, 2.1], [0.7, 2.6]].forEach(([w, y]) => { P(c, w * s, 0.5 * s, w * s, x, y * s, z, 0x2a5a3a); P(c, w * s * 0.9, 0.1 * s, w * s * 0.9, x, (y + 0.28) * s, z, 0xf0f6ff); });
 }
 function buildVillage(scene: THREE.Scene): Level {
-  const c = ctx(scene);
+  const c = ctx(scene, 2.5);
   floor(c, '#eef3f8', '#e2eaf3', '#d3deea', true);
   const fx = hx - 0.05;
   for (let z = -hz; z <= hz; z += 2) for (const s of [-1, 1]) P(c, 0.14, 1.0, 0.14, s * fx, 0.5, z, 0x6a4a2a);
-  for (let x = -hx; x <= hx; x += 2) for (const s of [-1, 1]) P(c, 0.14, 1.0, 0.14, x, 0.5, s * (hz - 0.05), 0x6a4a2a);
+  for (let x = -hx; x <= hx; x += 2) for (const s of [-1, 1]) if (!(s === -1 && Math.abs(x - 2.5) < 2.1)) P(c, 0.14, 1.0, 0.14, x, 0.5, s * (hz - 0.05), 0x6a4a2a);
+  const backSeg = (y: number, h: number, d: number, col: number) => { P(c, 0.6 + hx, h, d, -(hx - 0.6) / 2, y, -(hz - 0.05), col); P(c, hx - 4.4, h, d, (hx + 4.4) / 2, y, -(hz - 0.05), col); };
   for (const y of [0.85, 0.45]) {
-    for (const s of [-1, 1]) { P(c, 0.08, 0.12, hz * 2, s * fx, y, 0, 0x7a5a38); P(c, hx * 2, 0.12, 0.08, 0, y, s * (hz - 0.05), 0x7a5a38); }
+    for (const s of [-1, 1]) P(c, 0.08, 0.12, hz * 2, s * fx, y, 0, 0x7a5a38);
+    backSeg(y, 0.12, 0.08, 0x7a5a38); P(c, hx * 2, 0.12, 0.08, 0, y, hz - 0.05, 0x7a5a38);
   }
-  for (const s of [-1, 1]) { P(c, 0.2, 0.08, hz * 2, s * fx, 1.08, 0, 0xf4f8ff); P(c, hx * 2, 0.08, 0.2, 0, 1.08, s * (hz - 0.05), 0xf4f8ff); }
+  for (const s of [-1, 1]) P(c, 0.2, 0.08, hz * 2, s * fx, 1.08, 0, 0xf4f8ff);
+  backSeg(1.08, 0.08, 0.2, 0xf4f8ff); P(c, hx * 2, 0.08, 0.2, 0, 1.08, hz - 0.05, 0xf4f8ff);
   for (let z = -hz; z <= hz; z += 2.6) { pine(c, -(hx + 1.2), z, 1.3); pine(c, hx + 1.2, z + 1.1, 1.2); }
-  for (let x = -hx - 1; x <= hx + 1; x += 3) { pine(c, x, -(hz + 1.4), 1.3); pine(c, x + 1, hz + 1.4, 1.2); }
+  for (let x = -hx - 1; x <= hx + 1; x += 3) pine(c, x + 1, hz + 1.4, 1.2);
   // изба
   const ix = -2.8, iz = -11.7;
   P(c, 5.6, 2.2, 3.2, ix, 1.1, iz, 0x8c5a2c);
@@ -304,6 +357,7 @@ function buildVillage(scene: THREE.Scene): Level {
   c.npcs.push({ x: -1.6, z: -6.5, kind: 'coward' }, { x: 2.0, z: 0.5, kind: 'brave' }, { x: -2.6, z: 3.0, kind: 'coward' });
   signAt(c, 'д. ПОТАПОВО\nнас. 12 чел. · медведей 400', 4.6, 1.2, '#3a6a9a', '#fff', 2.6, 1.7, -hz + 0.2, 0, 28);
   sideSpawns(c);
+  addAnnex(c, THEMES.village);
   return finish(c);
 }
 
@@ -311,10 +365,10 @@ function buildVillage(scene: THREE.Scene): Level {
 const CONVICT: CharDef = { id: 'convict', name: 'Зэк', emoji: '🧑‍🔧', desc: '', cost: 0, skin: 0xe8c09a, shirt: 0x4a4e54, pants: 0x34383e, hat: 'kepka', stripes: 'tel', hp: 1, speed: 1, rate: 1, dmg: 1, hitR: 0.4 };
 
 function buildSawmill(scene: THREE.Scene): Level {
-  const c = ctx(scene);
+  const c = ctx(scene, 0);
   floor(c, '#c9a96e', '#bd9c60', '#a8884e');
   walls(c, 0x6d7d8c, 0x58666f, 1.4, 1.6);
-  for (const x of [-4, -2, 0, 2, 4]) P(c, 0.05, 3.0, 0.05, x, 1.5, -hz + 0.04, 0x46525c);
+  for (const x of [-4, -2.2, 2.2, 4]) P(c, 0.05, 3.0, 0.05, x, 1.5, -hz + 0.04, 0x46525c);
   windows(c, [-9, 3], 0xffe9a0, 0x3a3a3a);
   doors(c, 0x3a4a3a);
   const logPile = (x: number, z: number, w: number, d: number) => {
@@ -340,7 +394,7 @@ function buildSawmill(scene: THREE.Scene): Level {
     const m = new THREE.Mesh(merge(gs), vcMat);
     m.position.set(0, 0.25, z);
     c.group.add(m);
-    c.saws.push({ mesh: m, x: dir * 3, z, r: 0.85, dir, speed, range: hx - 1.1 });
+    c.saws.push({ mesh: m, x: dir * 3, z, r: 0.85, dir, speed, range: hx - 1.1, spin: true, dmg: 14, dmgEnemy: 22, title: 'Распилен на доски. Сам виноват.' });
   };
   mkSaw(-6, 1, 3.4); mkSaw(6, -1, 2.8);
   addHut(c, -4.3, -3.2, 1, 0x58666f, 0x3a4650);
@@ -351,20 +405,23 @@ function buildSawmill(scene: THREE.Scene): Level {
   signAt(c, 'ПРОХОД\nВОСПРЕЩЁН', 3.2, 1.2, '#e03a2a', '#fff', -hx + 0.08, 2.4, -2, Math.PI / 2);
   signAt(c, 'ПИЛЫ ЕДУТ —\nНЕ ЗЕВАЙ!', 3.4, 1.2, '#ffe14a', '#222', hx - 0.08, 2.4, 0, -Math.PI / 2, 32);
   sideSpawns(c);
+  addAnnex(c, THEMES.sawmill);
   return finish(c);
 }
 
 // ============================================================ БАНЯ
 function buildBanya(scene: THREE.Scene): Level {
-  const c = ctx(scene);
+  const c = ctx(scene, 0);
   floor(c, '#a8814f', '#9a7545', '#6b4e2a');
   walls(c, 0xb88a52, 0xa8783f, 1.4, 1.6);
-  for (let x = -hx + 1; x < hx; x += 1.2) P(c, 0.04, 3.0, 0.05, x, 1.5, -hz + 0.04, 0x7a5430);
+  for (let x = -hx + 1; x < hx; x += 1.2) if (Math.abs(x) > 2.1) P(c, 0.04, 3.0, 0.05, x, 1.5, -hz + 0.04, 0x7a5430);
   windows(c, [-9, 0, 9], 0xffd8a0, 0x6a4a2a);
   doors(c, 0x5a3a20);
   // полки-парилка у дальней стены
-  P(c, 12.0, 0.9, 1.4, 0, 0.45, -hz + 0.9, 0xc89a60); P(c, 12.0, 0.9, 0.9, 0, 1.35, -hz + 0.6, 0xc89a60); P(c, 12.0, 0.8, 0.5, 0, 2.2, -hz + 0.4, 0xc89a60);
-  O(c, 0, -hz + 0.9, 6.0, 0.9);
+  for (const s of [-1, 1]) {
+    P(c, 4.3, 0.9, 1.4, s * 4.05, 0.45, -hz + 0.9, 0xc89a60); P(c, 4.3, 0.9, 0.9, s * 4.05, 1.35, -hz + 0.6, 0xc89a60); P(c, 4.3, 0.8, 0.5, s * 4.05, 2.2, -hz + 0.4, 0xc89a60);
+    O(c, s * 4.05, -hz + 0.9, 2.15, 0.9);
+  }
   // каменка
   P(c, 1.6, 0.9, 1.6, 4.2, 0.45, -8, 0x2a2a2a);
   for (let i = 0; i < 6; i++) P(c, 0.4, 0.3, 0.4, 3.7 + (i % 3) * 0.45, 1.0 + (i > 2 ? 0.25 : 0), -8.3 + (i > 2 ? 0.4 : 0), 0x6a6a70);
@@ -390,12 +447,13 @@ function buildBanya(scene: THREE.Scene): Level {
   signAt(c, 'ЛЁГКОГО ПАРА!\nСПИРТНОЕ НЕ ПРОНОСИТЬ', 5, 1.3, '#f0e0b8', '#7a1a1a', 0, 2.5, -hz + 0.12, 0, 28);
   signAt(c, 'ВЕНИК — 50₽\nМЕДВЕДЮ — БЕСПЛАТНО', 3.4, 1.2, '#f0e0b8', '#2a5a2a', hx - 0.08, 2.4, 4, -Math.PI / 2, 26);
   sideSpawns(c);
+  addAnnex(c, THEMES.banya);
   return finish(c);
 }
 
 // ============================================================ ПОДЪЕЗД
 function buildPodezd(scene: THREE.Scene): Level {
-  const c = ctx(scene);
+  const c = ctx(scene, 3.6);
   floor(c, '#8c8c88', '#767672', '#505050');
   walls(c, 0x4a8a7a, 0xdcd8c8, 1.5, 1.5);
   windows(c, [-10, 2, 11], 0xa8c8e8, 0x8a8a8a);
@@ -406,8 +464,6 @@ function buildPodezd(scene: THREE.Scene): Level {
   for (let i = 0; i < 5; i++) P(c, 6.4, 0.3 * (i + 1), 0.8, -2.2, 0.15 * (i + 1), -hz + 0.4 + i * 0.8 - 0.4 + 0.0, 0x9a9a96);
   P(c, 0.1, 1.2, 4.2, 1.1, 1.1, -13, 0x3a3a3a); P(c, 0.14, 0.1, 4.2, 1.1, 1.7, -13, 0x7a4a2a);
   O(c, -2.2, -13, 3.2, 2.0);
-  // лифт
-  P(c, 2.4, 2.4, 0.2, 4.0, 1.2, -hz + 0.1, 0x8a8a90); P(c, 1.0, 2.2, 0.06, 3.5, 1.15, -hz + 0.22, 0xb0b0b8); P(c, 1.0, 2.2, 0.06, 4.5, 1.15, -hz + 0.22, 0xb0b0b8); P(c, 0.12, 0.12, 0.04, 5.4, 1.2, -hz + 0.22, 0xff3a2a);
   // батареи под окнами
   for (const z of [-10, 2, 11]) for (const s of [-1, 1]) P(c, 0.2, 0.6, 1.2, s * (hx - 0.12), 0.5, z, 0xf0f0f0);
   // препятствия: велосипед, коляска, мусорка, колонны, лавочка
@@ -430,11 +486,73 @@ function buildPodezd(scene: THREE.Scene): Level {
   signAt(c, 'КУРИТЬ В ПОДЪЕЗДЕ\nЗАПРЕЩЕНО! (МЕДВЕДЯМ ТОЖЕ)', 5, 1.2, '#ffe14a', '#222', 0, 2.5, hz - 0.12, Math.PI, 24);
   signAt(c, 'ДОМОФОН\nкод: 1234', 2.8, 1.1, '#2a2a30', '#ffd24a', hx - 0.08, 2.2, 8, -Math.PI / 2, 28);
   sideSpawns(c);
+  addAnnex(c, THEMES.podezd);
+  return finish(c);
+}
+
+// ============================================================ 240-й ТАНКОВЫЙ ПОЛК (Хабаровск)
+function mkTankMesh(): THREE.Mesh {
+  return new THREE.Mesh(merge([
+    box(2.8, 0.7, 1.7, 0, 0.6, 0, 0x4a5a32), box(2.95, 0.55, 0.42, 0, 0.32, 0.92, 0x2a2a28), box(2.95, 0.55, 0.42, 0, 0.32, -0.92, 0x2a2a28),
+    box(1.3, 0.5, 1.1, -0.2, 1.2, 0, 0x56683a), box(2.0, 0.17, 0.17, 1.35, 1.25, 0, 0x3a4a2a), box(0.35, 0.03, 0.35, -0.2, 1.47, 0, 0xcc2222),
+    box(0.5, 0.3, 0.5, -0.6, 1.55, 0.3, 0x4a5a32),
+  ]), vcMat);
+}
+
+function buildTank240(scene: THREE.Scene): Level {
+  const c = ctx(scene, 0);
+  floor(c, '#7a7a76', '#6e6e6a', '#5a5a56');
+  walls(c, 0xa8a8a0, 0x8a8a80, 1.4, 1.6);
+  for (const z of [-9, -3, 3, 9]) P(c, 10, 0.02, 0.14, 0, 0.02, z, 0xe8e8e0);
+  P(c, 0.14, 0.02, 30, -2.5, 0.02, 0, 0xe8e8e0); P(c, 0.14, 0.02, 30, 2.5, 0.02, 0, 0xe8e8e0);
+  windows(c, [-8, 8], 0xb8d8f0, 0x6a6a60);
+  doors(c, 0x3a5a3a);
+  // красная звезда на КПП
+  P(c, 3.6, 3.0, 0.3, -2.6, 1.5, hz - 0.2, 0x4a5a3a); P(c, 3.6, 3.0, 0.3, 2.6, 1.5, hz - 0.2, 0x4a5a3a);
+  P(c, 0.9, 0.9, 0.1, 0, 3.4, hz - 0.2, 0xcc2222);
+  // столовая и казарма — здания-укрытия
+  addHut(c, -3.9, -8.2, 1, 0xd8d0a8, 0x8a3a2a);
+  addHut(c, 3.9, -8.2, 1, 0x8a8a70, 0x4a5a3a);
+  signAt(c, 'СТОЛОВАЯ', 3.0, 0.8, '#d8d0a8', '#8a1d1d', -3.9, 2.9, -8.2 + 1.2, 0, 40);
+  signAt(c, 'КАЗАРМА\n1-Я РОТА', 3.0, 1.0, '#8a8a70', '#222', 3.9, 2.9, -8.2 + 1.2, 0, 32);
+  // флагшток, ёжи, покрышки, ящики
+  P(c, 0.14, 7.0, 0.14, 0, 3.5, -12.4, 0xc8c8c8); P(c, 1.4, 0.9, 0.05, 0.75, 6.4, -12.4, 0xcc2222); P(c, 0.9, 0.9, 0.9, 0, 0.45, -12.4, 0x8a8a80);
+  O(c, 0, -12.4, 0.5, 0.5);
+  for (const [x, z] of [[-5.2, 1.6], [5.2, 2.2], [-5.0, 11.8]]) {
+    startProp(c);
+    for (let i = 0; i < 3; i++) P(c, 1.0, 0.4, 1.0, x, 0.2 + i * 0.4, z, 0x1f1f1f);
+    endProp(c, x, z, 0.55, 0.55, 40, 0x2a2a2a);
+  }
+  for (const [x, z] of [[-4.6, 5.6], [4.6, -3.8]]) {
+    startProp(c);
+    P(c, 1.4, 1.1, 1.1, x, 0.55, z, 0x6a7a42); P(c, 1.46, 0.12, 1.16, x, 1.14, z, 0x4a5a2e);
+    endProp(c, x, z, 0.75, 0.6, 50, 0x6a7a42);
+  }
+  for (const [x, z] of [[-1.2, 11.0], [1.4, 12.2]]) {
+    startProp(c);
+    P(c, 0.14, 1.0, 0.14, x, 0.5, z, 0x333333); P(c, 1.0, 0.14, 0.14, x, 0.5, z, 0x333333); P(c, 0.14, 0.14, 1.0, x, 0.5, z, 0x333333);
+    endProp(c, x, z, 0.6, 0.6, 30, 0x333333);
+  }
+  // танки гоняют по плацу
+  const mkTank = (z: number, dir: number, speed: number) => {
+    const m = mkTankMesh();
+    m.position.set(dir * 2, 0, z);
+    c.group.add(m);
+    c.saws.push({ mesh: m, x: dir * 2, z, r: 1.5, dir, speed, range: hx - 1.8, spin: false, dmg: 28, dmgEnemy: 45, title: 'Раздавлен танком 240-го полка. Служба есть служба.' });
+  };
+  mkTank(-1.6, 1, 2.6); mkTank(5.0, -1, 2.1);
+  c.outfit = 'soldier';
+  c.npcs.push({ x: -5.4, z: 4.0, kind: 'brave' }, { x: 5.3, z: 4.6, kind: 'coward' }, { x: 0, z: 9.0, kind: 'helper' }, { x: -1.4, z: -4.4, kind: 'coward' });
+  signAt(c, '240-й ТАНКОВЫЙ ПОЛК\nХАБАРОВСК', 5, 1.3, '#3a4a2a', '#ffd24a', -2.6, 2.7, -hz + 0.12, 0, 30);
+  sideSpawns(c);
+  addAnnex(c, THEMES.tank240);
   return finish(c);
 }
 
 export function buildLocation(id: string, scene: THREE.Scene): Level {
+  ARENA.zMin = -hz - ANNEX_LEN;
   switch (id) {
+    case 'tank240': return buildTank240(scene);
     case 'barrack': return buildBarrack(scene);
     case 'village': return buildVillage(scene);
     case 'sawmill': return buildSawmill(scene);
@@ -447,9 +565,9 @@ export function buildLocation(id: string, scene: THREE.Scene): Level {
 /** Выталкивает окружность из прямоугольников и арены. Возвращает скорректированную точку. */
 export function resolveCircle(x: number, z: number, r: number, obs: AABB[], out: { x: number; z: number }): AABB | null {
   let hit: AABB | null = null;
-  const lx = ARENA.hx - r, lz = ARENA.hz - r;
+  const lx = ARENA.hx - r, zlo = ARENA.zMin + r, zhi = ARENA.zMax - r;
   if (x < -lx) x = -lx; else if (x > lx) x = lx;
-  if (z < -lz) z = -lz; else if (z > lz) z = lz;
+  if (z < zlo) z = zlo; else if (z > zhi) z = zhi;
   for (let i = 0; i < obs.length; i++) {
     const o = obs[i];
     if (o.off) continue;
@@ -470,7 +588,7 @@ export function resolveCircle(x: number, z: number, r: number, obs: AABB[], out:
     }
   }
   if (x < -lx) x = -lx; else if (x > lx) x = lx;
-  if (z < -lz) z = -lz; else if (z > lz) z = lz;
+  if (z < zlo) z = zlo; else if (z > zhi) z = zhi;
   out.x = x; out.z = z;
   return hit;
 }
