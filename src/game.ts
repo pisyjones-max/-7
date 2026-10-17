@@ -871,7 +871,7 @@ export class Game {
           if (e.rearT <= 0) { e.lunge = 0.5; e.lungeCd = 2.2; }
         } else if (e.rearCd <= 0 && dist < 7 && dist > 2.4 && e.stun <= 0) {
           e.rearT = 0.9; e.rearCd = 5 + Math.random() * 4;
-          if (Math.random() < 0.5) audio.play('roar');
+          audio.play('roar');
           if (Math.random() < 0.15) this.say(pick(BEAR_QUIPS), 'b');
           this.shake = Math.min(1, this.shake + 0.1);
         }

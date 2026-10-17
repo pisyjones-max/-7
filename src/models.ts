@@ -172,27 +172,44 @@ export function buildBear(def: EnemyDef): Rig {
   const fur = def.fur;
   const belly = def.belly;
   if (!set) {
-    const eyeCol = def.id === 'mutant' ? 0xffee00 : def.id === 'dog' ? 0xffc010 : 0xff1a1a;
-    const dark = new THREE.Color(fur).multiplyScalar(0.55).getHex();
+    const shade = (c: number, k: number) => new THREE.Color(c).multiplyScalar(k).getHex();
+    const eyeCol = def.id === 'mutant' ? 0xffee00 : def.id === 'dog' ? 0xffc010 : 0xff2a00;
+    const fur = def.id === 'mutant' ? def.fur : shade(def.fur, 0.75);
+    const belly = shade(def.belly, 0.8);
+    const dark = shade(fur, 0.55);
+    const bone = 0xf4efe0;
     const headP: Geo[] = [
-      ball(1, fur, 0, 0, 0, 0.4, 0.34, 0.36),
-      ball(1, belly, 0, -0.1, 0.3, 0.2, 0.15, 0.22),
-      ball(0.07, 0x111111, 0, -0.03, 0.5),
-      ball(0.13, fur, -0.26, 0.28, -0.02), ball(0.13, fur, 0.26, 0.28, -0.02),
-      ball(0.075, 0x5a3a2a, -0.26, 0.28, 0.06), ball(0.075, 0x5a3a2a, 0.26, 0.28, 0.06),
-      ball(1, 0xffffff, -0.16, 0.09, 0.3, 0.085, 0.065, 0.05), ball(1, 0xffffff, 0.16, 0.09, 0.3, 0.085, 0.065, 0.05),
-      ball(0.04, eyeCol, -0.155, 0.09, 0.34), ball(0.04, eyeCol, 0.155, 0.09, 0.34),
-      ball(1, 0x111111, -0.16, 0.19, 0.31, 0.14, 0.035, 0.035, 0, -0.55), ball(1, 0x111111, 0.16, 0.19, 0.31, 0.14, 0.035, 0.035, 0, 0.55),
-      ball(1, 0x5a0a0a, 0, -0.2, 0.36, 0.15, 0.04, 0.06),
-      cone(0.028, 0.09, 0xffffff, -0.07, -0.19, 0.42, Math.PI), cone(0.028, 0.09, 0xffffff, 0.07, -0.19, 0.42, Math.PI),
+      ball(1, fur, 0, 0, 0, 0.42, 0.35, 0.38),                                                     // череп
+      ball(1, fur, -0.3, -0.06, 0.1, 0.18, 0.22, 0.22), ball(1, fur, 0.3, -0.06, 0.1, 0.18, 0.22, 0.22), // тяжёлые щёки
+      ball(1, dark, 0, 0.17, 0.27, 0.4, 0.07, 0.1),                                                // нависшая бровь
+      ball(1, belly, 0, -0.1, 0.38, 0.2, 0.15, 0.3),                                               // морда
+      ball(0.075, 0x0a0a0a, 0, -0.01, 0.65),                                                       // нос
+      ball(0.09, fur, -0.27, 0.27, -0.06), ball(0.09, fur, 0.27, 0.27, -0.06),                     // маленькие злые уши
+      ball(1, 0x070707, -0.16, 0.08, 0.31, 0.11, 0.075, 0.06), ball(1, 0x070707, 0.16, 0.08, 0.31, 0.11, 0.075, 0.06), // тёмные глазницы
+      ball(1, eyeCol, -0.155, 0.08, 0.35, 0.075, 0.04, 0.04, 0, -0.35), ball(1, eyeCol, 0.155, 0.08, 0.35, 0.075, 0.04, 0.04, 0, 0.35), // красные щёлки
+      ball(1, 0x4a0808, 0, -0.2, 0.38, 0.16, 0.07, 0.24),                                          // раскрытая пасть
+      ball(1, fur, 0, -0.3, 0.33, 0.16, 0.06, 0.2),                                                // нижняя челюсть
+      cone(0.035, 0.17, bone, -0.08, -0.2, 0.55, Math.PI), cone(0.035, 0.17, bone, 0.08, -0.2, 0.55, Math.PI), // клыки сверху
+      cone(0.028, 0.1, bone, -0.15, -0.19, 0.45, Math.PI), cone(0.028, 0.1, bone, 0.15, -0.19, 0.45, Math.PI),
+      cone(0.03, 0.13, bone, -0.07, -0.29, 0.5), cone(0.03, 0.13, bone, 0.07, -0.29, 0.5),         // клыки снизу
+      ball(1, 0x9a1a1a, -0.14, 0.02, 0.35, 0.12, 0.012, 0.012, 0, 0.7),                            // шрам
     ];
     const bodyP: Geo[] = [
-      ball(1, fur, 0, 0, 0, 0.52, 0.5, 0.4),
-      ball(1, fur, 0, 0.27, -0.1, 0.44, 0.32, 0.34),
-      ball(1, belly, 0, -0.04, 0.26, 0.36, 0.38, 0.2),
+      ball(1, fur, 0, 0, 0, 0.54, 0.5, 0.42),
+      ball(1, fur, 0, 0.3, -0.1, 0.5, 0.36, 0.36),                                                 // мощный горб
+      ball(1, fur, -0.42, 0.28, 0.02, 0.24, 0.26, 0.26), ball(1, fur, 0.42, 0.28, 0.02, 0.24, 0.26, 0.26), // плечи
+      ball(1, belly, 0, -0.05, 0.28, 0.34, 0.36, 0.18),
+      cone(0.08, 0.26, dark, 0, 0.58, -0.12, -0.4), cone(0.07, 0.22, dark, 0, 0.5, -0.3, -0.9),    // шерсть дыбом
+      cone(0.07, 0.2, dark, -0.22, 0.52, -0.1, -0.5, -0.3), cone(0.07, 0.2, dark, 0.22, 0.52, -0.1, -0.5, 0.3),
     ];
-    const legP: Geo[] = [caps(0.15, 0.28, fur, 0, -0.16, 0), ball(1, dark, 0, -0.38, 0.06, 0.17, 0.08, 0.25)];
-    const armP = (): Geo[] => [caps(0.15, 0.42, fur, 0, -0.3, 0), cone(0.035, 0.1, 0xf0f0f0, -0.08, -0.72, 0.08, Math.PI), cone(0.035, 0.1, 0xf0f0f0, 0, -0.74, 0.1, Math.PI), cone(0.035, 0.1, 0xf0f0f0, 0.08, -0.72, 0.08, Math.PI)];
+    const legP: Geo[] = [
+      caps(0.18, 0.26, fur, 0, -0.17, 0), ball(1, dark, 0, -0.38, 0.08, 0.2, 0.09, 0.28),
+      cone(0.03, 0.12, bone, -0.08, -0.4, 0.3, Math.PI / 2), cone(0.03, 0.12, bone, 0, -0.4, 0.32, Math.PI / 2), cone(0.03, 0.12, bone, 0.08, -0.4, 0.3, Math.PI / 2),
+    ];
+    const armP = (): Geo[] => [
+      caps(0.18, 0.4, fur, 0, -0.3, 0),
+      cone(0.045, 0.2, bone, -0.09, -0.82, 0.08, Math.PI), cone(0.045, 0.22, bone, 0, -0.84, 0.1, Math.PI), cone(0.045, 0.2, bone, 0.09, -0.82, 0.08, Math.PI),
+    ];
     const armLP = armP(); const armRP = armP();
 
     switch (def.id) {
@@ -227,7 +244,7 @@ export function buildBear(def: EnemyDef): Rig {
     cache.set('bs' + def.id, set);
   }
   const rig = assembleBear(set);
-  rig.head.scale.setScalar(def.id === 'cub' ? 1.28 : 1.15);
+  rig.head.scale.setScalar(def.id === 'cub' ? 1.25 : 1.3);
   rig.root.scale.setScalar(def.size);
   return rig;
 }
